@@ -1,0 +1,1140 @@
+---
+title: "What is a successful reintroduction?"
+date: "2023-12-01"
+output: pdf_document
+geometry: "left=1cm,right=1cm,top=2cm,bottom=2cm"
+classoption: landscape
+---
+
+**Workflow to chaerecterise the factors driving reintroduction success**
+
+```{r setup, include=FALSE, warning=F, message = F}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+knitr::opts_chunk$set(tidy.opts = list(width.cutoff = 60), tidy = TRUE)
+```
+
+```{r load_manipulate, warning=F, message = F}
+library(dplyr)
+library(plyr)
+library(tidyverse)
+library(magrittr)
+library(here)
+library(arrow)
+library(brms)
+library(ggeffects)
+library(ggpubr)
+library(brms)
+library(scales)
+library(mgcv)
+
+palette_3 = c("#604087", "#4f67a1", "#659c75")
+palette_7 = c("#2b4570", "#cfc0ba", "#8e2e29", "#e8871e", "#8ba29c", "#a8d0db", "#a37a74")
+
+load("sim.Rdata")
+sims = sim_tom_ok
+sims$z_1 = sims$Z
+sims$delta_sp_32 = as.numeric(sims$delta_sp_32)
+sims$delta_stabp_31 = sims$delta_stabp_31
+sims$delta_stabc_21 = sims$delta_stabc_21
+sims$delta_stabc_32 = sims$delta_stabc_32
+sims$stab_com_1= log(sims$stab_com_1)
+sims$stab_com_2= log(sims$stab_com_2)
+summary(sims) #In analyses, need to log all deltas that arent comparing to a maximum.
+sims = subset(sims, is.finite(sims$delta_bmp_31))
+sims = subset(sims, is.na(sims$nb_link))
+```
+
+### Model 1 - Probability the predator can establish (survive) reintroduction
+
+```{r m1, warning=F, message = F, fig.width = 11, fig.height = 9.5} 
+m1 = glm(delta_sp_32 ~ realised_C_1*realised_S_1 + g_1*delta_g_31 + delta_s_21 + z_1, data = sims, family=binomial(link='logit'))
+summary(m1)
+m1_z = ggpredict(m1, "z_1 [1:1000, by = 5]")
+plt_m1_z = ggplot(m1_z) +
+  geom_line(aes(x = x, y = predicted)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  labs(x = "Mass ratio (Predator:Prey)", y = "Probability population reestablishes") +
+  scale_x_continuous(expand = c(0,0)) +
+  scale_y_continuous(expand = c(0,0)) +
+  theme_classic()
+
+m1_c_s = ggpredict(m1, terms = c("realised_C_1 [0:0.3, by = 0.01]", "realised_S_1 [5, 15, 50]"))
+plt_m1_c_s = ggplot(m1_c_s) +
+  geom_line(aes(x = x, y = predicted, colour = group)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high, fill = group), alpha = 0.4) +
+  labs(x = "Connectance", y = "Probability population reestablishes") +
+  scale_fill_manual(values = palette_3, name = "Richness") +
+  scale_colour_manual(values = palette_3, name = "Richness") +
+  scale_x_continuous(expand = c(0,0)) +
+  scale_y_continuous(expand = c(0,0))  +
+  theme_classic() +
+  theme(legend.position = "bottom")
+
+m1_g_deltag = ggpredict(m1, terms = c("delta_g_31 [0.5:1, by = 0.02]", "g_1 [3, 7, 10]"))
+plt_m1_g_deltag = ggplot(m1_g_deltag) +
+  geom_line(aes(x = x, y = predicted, colour = group)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high, fill = group), alpha = 0.4) +
+  labs(x = "Predator interaction intactness", y = "Probability population reestablishes") +
+  scale_fill_manual(values = palette_3, name = "Interactions") +
+  scale_colour_manual(values = palette_3, name = "Interactions") +
+  scale_x_continuous(expand = c(0,0)) +
+  scale_y_continuous(expand = c(0,0)) +
+  theme_classic() +
+  theme(legend.position = "bottom")
+
+m1_delta_s = ggpredict(m1, "delta_s_21 [0:1, by = 0.02]")
+plt_m1_delta_s = ggplot(m1_delta_s) +
+  geom_line(aes(x = x, y = predicted)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  labs(x = "Persistance (post-extirpation)", y = "Probability population reestablishes") +
+  scale_x_continuous(expand = c(0,0)) +
+  scale_y_continuous(expand = c(0,0)) +
+  theme_classic()
+
+ggarrange(plt_m1_z, plt_m1_delta_s, plt_m1_c_s, plt_m1_g_deltag, ncol = 2, nrow = 2, align = "hv", labels = c("A", "B", "C", "D"), heights = c(1, 1.2))
+```
+
+### Model 2 - Change in predator population stabiliy post-reintrodution
+
+```{r m2, warning=F, message = F, fig.width = 11, fig.height = 9.5}
+#Population re-establish stability?
+m2 = lm(log(delta_stabp_31) ~ realised_C_1*realised_S_1 + g_1*delta_g_31 + delta_s_21 + z_1, data = sims)
+summary(m2)
+m2_g = ggpredict(m2, "g_1 [0:40, by = 0.1]", back_transform = F)
+plt_m2_g = ggplot(m2_g) +
+  geom_line(aes(x = x, y = predicted)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed") +
+  labs(x = "Interactions", y = "\u0394 Population stability") +  
+  #scale_y_log10(expand = c(0,0), 
+  #                   breaks = c(0.1,1,10), 
+  #                   labels = c("1/10","1/1", "10/1"), 
+  #              limits =c(0.05, 50)) +
+  scale_x_continuous(expand = c(0,0),
+                     limits = c(0, 20)) +
+  theme_classic()
+
+m2_deltag = ggpredict(m2, terms = c("delta_g_31 [0.5:1, by = 0.02]"), back_transform = F)
+plt_m2_deltag = ggplot(m2_deltag) +
+  geom_line(aes(x = x, y = predicted)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+    geom_hline(aes(yintercept = 0), linetype = "dashed") +
+  labs(x = "Predator interaction intactness", y = "\u0394 Population stability") +
+  scale_x_continuous(expand = c(0,0),
+                     limits = c(0.5, 1)) +
+  theme_classic()
+
+m2_delta_s = ggpredict(m2, "delta_s_21 [0:1, by = 0.02]", back_transform = F)
+plt_m2_delta_s = ggplot(m2_delta_s) +
+  geom_line(aes(x = x, y = predicted)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed") +
+  labs(x = "Persistance (post-extirpation)", y = "\u0394 Population stability") +
+  scale_x_continuous(expand = c(0,0)) +
+  theme_classic()
+
+m2_c = ggpredict(m2, "realised_C_1 [0:0.4, by = 0.01]", back_transform = F)
+plt_m2_c = ggplot(m2_c) +
+  geom_line(aes(x = x, y = predicted)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed") +
+  labs(x = "Connectance", y = "\u0394 Population stability") +
+  scale_x_continuous(expand = c(0,0)) +
+  theme_classic()
+
+m2_z = ggpredict(m2, "z_1 [0:1000, by = 10]", back_transform = F)
+plt_m2_z = ggplot(m2_z) +
+  geom_line(aes(x = x, y = predicted)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed") +
+  labs(x = "Mass ratio (Predator:Prey)", y = "\u0394 Population stability") +
+  scale_x_continuous(expand = c(0,0)) +
+  theme_classic()
+
+m2_g_deltag = ggpredict(m2, terms = c("delta_g_31 [0.5:1, by = 0.02]", "g_1 [3, 7, 10]"))
+plt_m2_g_deltag = ggplot(m2_g_deltag) +
+  geom_line(aes(x = x, y = predicted, colour = group)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high, fill = group), alpha = 0.4) +
+  labs(x = "Predator interaction intactness", y = "\u0394 Population stability") +
+  scale_fill_manual(values = palette_3, name = "Interactions") +
+  scale_colour_manual(values = palette_3, name = "Interactions") +
+  scale_x_continuous(expand = c(0,0)) +
+  scale_y_continuous(expand = c(0,0)) +
+  theme_classic() +
+  theme(legend.position = "bottom")
+
+
+ggarrange(plt_m2_g, plt_m2_deltag, plt_m2_delta_s, plt_m2_c, plt_m2_z, plt_m2_g_deltag, ncol = 3, nrow = 2, align = "hv", labels = c("A", "B", "C", "D", "E", "F"), heights = c(1, 1))
+```
+
+### Model 3 - Change in predator biomass post-reintroduction
+
+```{r m3, warning=F, message = F, fig.width = 11, fig.height = 9.5}
+sims$delta_bmp_31 = ifelse(sims$delta_bmp_31 == 0, NA, sims$delta_bmp_31) #Remove cases where predator went extinct in 3
+
+m3 = lm(log(delta_bmp_31) ~ realised_C_1*realised_S_1 + g_1*delta_g_31 + delta_s_21 + z_1, data = sims)
+summary(m3)
+
+m3_z = ggpredict(m3, "z_1 [1:1000, by = 5]", back_transform = F)
+plt_m3_z = ggplot(m3_z) +
+  geom_line(aes(x = x, y = predicted)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  geom_hline(aes(yintercept = 1), linetype = "dashed") +
+  labs(x = "Mass ratio (Predator:Prey)", y = "\u0394 Predator biomass") +
+  scale_x_continuous(expand = c(0,0)) +
+  theme_classic()
+
+m3_c_s = ggpredict(m3, terms = c("realised_C_1 [0:0.3, by = 0.01]", "realised_S_1 [5, 15, 50]"), back_transform = F)
+plt_m3_c_s = ggplot(m3_c_s) +
+  geom_line(aes(x = x, y = predicted, colour = group)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high, fill = group), alpha = 0.4) +
+  geom_hline(aes(yintercept = 1), linetype = "dashed") +
+  labs(x = "Connectance", y = "\u0394 Predator biomass") +
+  scale_fill_manual(values = palette_3, name = "Richness") +
+  scale_colour_manual(values = palette_3, name = "Richness") +
+  scale_x_continuous(expand = c(0,0)) +
+  theme_classic() +
+  theme(legend.position = "bottom")
+
+m3_g_deltag = ggpredict(m3, terms = c("delta_g_31 [0.5:1, by = 0.02]", "g_1 [3, 7, 10]"), back_transform = F)
+plt_m3_g_deltag = ggplot(m3_g_deltag) +
+  geom_line(aes(x = x, y = predicted, colour = group)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high, fill = group), alpha = 0.4) +
+  labs(x = "Predator interaction intactness", y = "\u0394 Predator biomass") +
+  scale_fill_manual(values = palette_3, name = "Interactions") +
+  scale_colour_manual(values = palette_3, name = "Interactions") +
+  scale_x_continuous(expand = c(0,0)) +
+  scale_y_continuous(expand = c(0,0)) +
+  theme_classic() +
+  theme(legend.position = "bottom")
+
+m3_delta_s = ggpredict(m3, "delta_s_21 [0:1, by = 0.02]", back_transform = F)
+plt_m3_delta_s = ggplot(m3_delta_s) +
+  geom_line(aes(x = x, y = predicted)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  geom_hline(aes(yintercept = 1), linetype = "dashed") +
+  labs(x = "Community intactness", y = "\u0394 Predator biomass") +
+  scale_x_continuous(expand = c(0,0)) +
+  theme_classic()
+
+ggarrange(plt_m3_z, plt_m3_delta_s, plt_m3_c_s, plt_m3_g_deltag, ncol = 2, nrow = 2, align = "h", labels = c("A", "B", "C", "D"), heights = c(1, 1), common.legend = F, legend = "bottom")
+
+```
+
+### Model 4 - Post-extirpation community persistance
+
+```{r m4, warning=F, message = F, fig.width = 11, fig.height = 9.5}
+sims$delta_s_21 = sims$delta_s_21 - 0.01
+
+m4 = gam(delta_s_21 ~ realised_C_1*realised_S_1 + g_1 + z_1 + stab_com_1 + tlvl_mean_1, data = sims, family=betar(link="logit"))
+summary(m4)
+
+m4_z = ggpredict(m4, "z_1 [1:1000, by = 5]")
+plt_m4_z = ggplot(m4_z) +
+  geom_line(aes(x = x, y = predicted)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  labs(x = "Mass ratio (Predator:Prey)", y = "Pesistance (post-extirpation)") +
+  scale_x_continuous(expand = c(0,0)) +
+  scale_y_continuous(expand = c(0,0)) +
+  theme_classic()
+
+m4_tlvl = ggpredict(m4, "tlvl_mean_1 [1:6, by = 0.1]")
+plt_m4_tlvl = ggplot(m4_tlvl) +
+  geom_line(aes(x = x, y = predicted)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  labs(x = "Trophic level (mean)", y = "Pesistance (post-extirpation)") +
+  scale_x_continuous(expand = c(0,0)) +
+  scale_y_continuous(expand = c(0,0)) +
+  theme_classic()
+
+# Needs transformation
+m4_cv_com = ggpredict(m4, "stab_com_1 [0.1:30, by = 0.1]")
+plt_m4_cv_com = ggplot(m4_cv_com) +
+  geom_line(aes(x = exp(x), y = predicted)) +
+  geom_ribbon(aes(x = exp(x), ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  labs(x = "Community stability (1/CV)", y = "Persistance (post-extirpation)") +
+  scale_x_log10(expand = c(0,0)) +
+  scale_y_continuous(expand = c(0,0)) +
+  theme_classic()
+
+
+m4_g = ggpredict(m4, "g_1 [0:20, by = 0.1]")
+plt_m4_g = ggplot(m4_g) +
+  geom_line(aes(x = x, y = predicted)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  labs(x = "Predator interactions", y = "Pesistance (post-extirpation)") +
+  scale_x_continuous(expand = c(0,0)) +
+  scale_y_continuous(expand = c(0,0)) +
+  theme_classic()
+
+m4_c_s = ggpredict(m4, terms = c("realised_C_1 [0:0.3, by = 0.01]", "realised_S_1 [5, 15, 50]"))
+plt_m4_c_s = ggplot(m4_c_s) +
+  geom_line(aes(x = x, y = predicted, colour = group)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high, fill = group), alpha = 0.4) +
+  labs(x = "Connectance", y = "Persistance (post-extirpation)") +
+  scale_fill_manual(values = palette_3, name = "Richness") +
+  scale_colour_manual(values = palette_3, name = "Richness") +
+  scale_x_continuous(expand = c(0,0)) +
+  scale_y_continuous(expand = c(0,0))  +
+  theme_classic() +
+  theme(legend.position = "bottom")
+
+ggarrange(
+  ggarrange(plt_m4_z, plt_m4_tlvl, plt_m4_g, plt_m4_cv_com, ncol = 2, nrow = 2, align = "hv", labels = c("A", "B", "C", "D"), heights = c(1)),
+  plt_m4_c_s, 
+  ncol = 2, nrow = 1, widths = c(1,0.7), labels = c("", "E"), align = "v")
+
+```
+
+### Model 5 - Post-reintroduction community persistance
+
+```{r m5, warning=F, message = F, fig.width = 11, fig.height = 9.5}
+sims$delta_s_32 = sims$delta_s_32 - 0.01
+
+m5 = gam(delta_s_32 ~ realised_C_1*realised_S_1 + delta_s_21 + g_1 + z_1 + tlvl_mean_1 + delta_sp_32 + stab_com_2, data = sims, family=betar(link="logit"))
+summary(m5)
+
+
+m5_z = ggpredict(m5, "z_1 [1:1000, by = 5]")
+plt_m5_z = ggplot(m5_z) +
+  geom_line(aes(x = x, y = predicted)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  labs(x = "Mass ratio (Predator:Prey)", y = "Pesistance (post-reintroduction)") +
+  scale_x_continuous(expand = c(0,0)) +
+  scale_y_continuous(expand = c(0,0)) +
+  theme_classic()
+
+m5_tlvl = ggpredict(m5, "tlvl_mean_1 [1:6, by = 0.1]")
+plt_m5_tlvl = ggplot(m5_tlvl) +
+  geom_line(aes(x = x, y = predicted)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  labs(x = "Trophic level (mean)", y = "Pesistance (post-reintroduction)") +
+  scale_x_continuous(expand = c(0,0)) +
+  scale_y_continuous(expand = c(0,0)) +
+  theme_classic()
+
+# Needs transformation
+m5_cv_com = ggpredict(m5, "stab_com_2 [0.1:30, by = 0.1]")
+plt_m5_cv_com = ggplot(m5_cv_com) +
+  geom_line(aes(x = exp(x), y = predicted)) +
+  geom_ribbon(aes(x = exp(x), ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  labs(x = "Community stability (1/CV)", y = "Persistance (post-reintroduction)") +
+  scale_x_log10(expand = c(0,0)) +
+  scale_y_continuous(expand = c(0,0)) +
+  theme_classic()
+
+m5_deltas_21 = ggpredict(m5, "delta_s_21 [0.1:1, by = 0.01]")
+plt_m5_deltas_21 = ggplot(m5_deltas_21) +
+  geom_line(aes(x = x, y = predicted)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  labs(x = "Persistance (post-extirpation)", y = "Persistance (post-reintroduction)") +
+  scale_x_continuous(expand = c(0,0)) +
+  scale_y_continuous(expand = c(0,0)) +
+  theme_classic()
+
+m5_deltasp_32 = ggpredict(m5, "delta_sp_32 [0.1:1, by = 0.01]")
+plt_m5_deltasp_32 = ggplot(m5_deltasp_32) +
+  geom_line(aes(x = x, y = predicted)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  labs(x = "Probability population reestabilshes", y = "Persistance (post-reintroduction)") +
+  scale_x_continuous(expand = c(0,0)) +
+  scale_y_continuous(expand = c(0,0)) +
+  theme_classic()
+
+m5_g = ggpredict(m5, "g_1 [0:20, by = 0.1]")
+plt_m5_g = ggplot(m5_g) +
+  geom_line(aes(x = x, y = predicted)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  labs(x = "Predator interactions", y = "Pesistance (post-reintroduction)") +
+  scale_x_continuous(expand = c(0,0)) +
+  scale_y_continuous(expand = c(0,0)) +
+  theme_classic()
+
+m5_c_s = ggpredict(m5, terms = c("realised_C_1 [0:0.3, by = 0.01]", "realised_S_1 [5, 15, 50]"))
+plt_m5_c_s = ggplot(m5_c_s) +
+  geom_line(aes(x = x, y = predicted, colour = group)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high, fill = group), alpha = 0.4) +
+  labs(x = "Connectance", y = "Persistance (post-extirpation)") +
+  scale_fill_manual(values = palette_3, name = "Richness") +
+  scale_colour_manual(values = palette_3, name = "Richness") +
+  scale_x_continuous(expand = c(0,0)) +
+  scale_y_continuous(expand = c(0,0))  +
+  theme_classic() +
+  theme(legend.position = "bottom")
+
+
+ggarrange(
+  ggarrange(plt_m5_z, plt_m5_tlvl, plt_m5_g, plt_m5_deltas_21, plt_m5_cv_com, plt_m5_deltasp_32, ncol = 2, nrow = 3, align = "h", labels = c("A", "B", "C", "D", "E", "F"), heights = c(1)),
+  plt_m5_c_s, 
+  ncol = 2, nrow = 1, widths = c(1,0.7), labels = c("", "G"))
+
+
+```
+
+### Model 6 - Change in community biomass post-extirpation
+
+```{r m6, warning=F, message = F, fig.width = 11, fig.height = 9.5}
+#Population re-establish stability?
+m6 = lm(log(delta_bmc_21) ~  realised_C_1*realised_S_1 + g_1 + z_1 + stab_com_1 + tlvl_mean_1, data = sims)
+summary(m6)
+
+
+m6_z = ggpredict(m6, "z_1 [1:1000, by = 5]", back_transform = F)
+plt_m6_z = ggplot(m6_z) +
+  geom_line(aes(x = x, y = predicted)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed") +
+  labs(x = "Mass ratio (Predator:Prey)", y = "\u0394 Community biomass") +
+  scale_x_continuous(expand = c(0,0)) +
+  theme_classic()
+
+m6_tlvl = ggpredict(m6, "tlvl_mean_1 [1:6, by = 0.1]", back_transform = F)
+plt_m6_tlvl = ggplot(m6_tlvl) +
+  geom_line(aes(x = x, y = predicted)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed") +
+  labs(x = "Trophic level (mean)", y = "\u0394 Community biomass") +
+  scale_x_continuous(expand = c(0,0)) +
+  theme_classic()
+
+# Needs transformation
+m6_cv_com = ggpredict(m6, "stab_com_1 [0.1:30, by = 0.1]", back_transform = F)
+plt_m6_cv_com = ggplot(m6_cv_com) +
+  geom_line(aes(x = exp(x), y = predicted)) +
+  geom_ribbon(aes(x = exp(x), ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed") +
+  labs(x = "Community stability (1/CV)", y = "\u0394 Community biomass") +
+  scale_x_log10(expand = c(0,0)) +
+  theme_classic()
+
+
+m6_g = ggpredict(m6, "g_1 [0:20, by = 0.1]", back_transform = F)
+plt_m6_g = ggplot(m6_g) +
+  geom_line(aes(x = x, y = predicted)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed") +
+  labs(x = "Predator interactions", y = "\u0394 Community biomass") +
+  scale_x_continuous(expand = c(0,0)) +
+  theme_classic()
+
+m6_c_s = ggpredict(m6, terms = c("realised_C_1 [0:0.3, by = 0.01]", "realised_S_1 [5, 15, 50]"), back_transform = F)
+plt_m6_c_s = ggplot(m6_c_s) +
+  geom_line(aes(x = x, y = predicted, colour = group)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high, fill = group), alpha = 0.4) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed") +
+  labs(x = "Connectance", y = "\u0394 Community biomass") +
+  scale_fill_manual(values = palette_3, name = "Richness") +
+  scale_colour_manual(values = palette_3, name = "Richness") +
+  scale_x_continuous(expand = c(0,0)) +
+  theme_classic() +
+  theme(legend.position = "bottom")
+
+ggarrange(
+  ggarrange(plt_m6_z, plt_m6_tlvl, plt_m6_g, plt_m6_cv_com, ncol = 2, nrow = 2, align = "h", labels = c("A", "B", "C", "D"), heights = c(1)),
+  plt_m6_c_s, 
+  ncol = 2, nrow = 1, widths = c(1,0.7), labels = c("", "E"))
+
+
+```
+
+### Model 7 - Change in community biomass post-reintroduction
+
+```{r m7, warning=F, message = F, fig.width = 11, fig.height = 9.5}
+
+m7 = lm(log(delta_bmc_32) ~  realised_C_1*realised_S_1 + delta_s_21 + g_1 + z_1 + tlvl_mean_1 + delta_sp_32 + stab_com_2, data = sims)
+summary(m7)
+
+
+
+m7_z = ggpredict(m7, "z_1 [1:1000, by = 5]", back_transform = F)
+plt_m7_z = ggplot(m7_z) +
+  geom_line(aes(x = x, y = predicted)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed") +
+  labs(x = "Mass ratio (Predator:Prey)", y = "\u0394 Community biomass") +
+  scale_x_continuous(expand = c(0,0)) +
+  theme_classic()
+
+m7_tlvl = ggpredict(m7, "tlvl_mean_1 [1:6, by = 0.1]", back_transform = F)
+plt_m7_tlvl = ggplot(m7_tlvl) +
+  geom_line(aes(x = x, y = predicted)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed") +
+  labs(x = "Trophic level (mean)", y = "\u0394 Community biomass") +
+  scale_x_continuous(expand = c(0,0)) +
+  theme_classic()
+
+# Needs transformation
+m7_cv_com = ggpredict(m7, "stab_com_2 [0.1:30, by = 0.1]", back_transform = F)
+plt_m7_cv_com = ggplot(m7_cv_com) +
+  geom_line(aes(x = exp(x), y = predicted)) +
+  geom_ribbon(aes(x = exp(x), ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed") +
+  labs(x = "Community stability (1/CV)", y = "\u0394 Community biomass") +
+  scale_x_log10(expand = c(0,0)) +
+  theme_classic()
+
+m7_deltas_21 = ggpredict(m7, "delta_s_21 [0.1:1, by = 0.01]", back_transform = F)
+plt_m7_deltas_21 = ggplot(m7_deltas_21) +
+  geom_line(aes(x = x, y = predicted)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed") +
+  labs(x = "Persistance (post-extirpation)", y = "\u0394 Community biomass") +
+  scale_x_continuous(expand = c(0,0)) +
+  theme_classic()
+
+m7_deltasp_32 = ggpredict(m7, "delta_sp_32 [0.1:1, by = 0.01]", back_transform = F)
+plt_m7_deltasp_32 = ggplot(m7_deltasp_32) +
+  geom_line(aes(x = x, y = predicted)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed") +
+  labs(x = "Probability population reestabilshes", y = "\u0394 Community biomass") +
+  scale_x_continuous(expand = c(0,0)) +
+  theme_classic()
+
+m7_g = ggpredict(m7, "g_1 [0:20, by = 0.1]", back_transform = F)
+plt_m7_g = ggplot(m7_g) +
+  geom_line(aes(x = x, y = predicted)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed") +
+  labs(x = "Predator interactions", y = "\u0394 Community biomass") +
+  scale_x_continuous(expand = c(0,0)) +
+  theme_classic()
+
+m7_c_s = ggpredict(m7, terms = c("realised_C_1 [0:0.3, by = 0.01]", "realised_S_1 [5, 15, 50]"), back_transform = F)
+plt_m7_c_s = ggplot(m7_c_s) +
+  geom_line(aes(x = x, y = predicted, colour = group)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high, fill = group), alpha = 0.4) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed") +
+  labs(x = "Connectance", y = "\u0394 Community biomass") +
+  scale_fill_manual(values = palette_3, name = "Richness") +
+  scale_colour_manual(values = palette_3, name = "Richness") +
+  scale_x_continuous(expand = c(0,0)) +
+  theme_classic() +
+  theme(legend.position = "bottom")
+
+
+ggarrange(
+  ggarrange(plt_m7_z, plt_m7_tlvl, plt_m7_g, plt_m7_deltas_21, plt_m7_cv_com, plt_m7_deltasp_32, ncol = 2, nrow = 3, align = "h", labels = c("A", "B", "C", "D", "E", "F"), heights = c(1)),
+  plt_m7_c_s, 
+  ncol = 2, nrow = 1, widths = c(1,0.7), labels = c("", "G"))
+
+
+```
+
+### Model 8 - Change in community stability post-extirpation
+
+```{r m8, warning=F, message = F, fig.width = 11, fig.height = 9.5}
+#Population re-establish stability?
+m8 = lm(log(delta_stabc_21) ~  realised_C_1*realised_S_1 + g_1 + z_1 + stab_com_1 + tlvl_mean_1, data = sims)
+summary(m8)
+
+
+m8_z = ggpredict(m8, "z_1 [1:1000, by = 5]", back_transform = F)
+plt_m8_z = ggplot(m8_z) +
+  geom_line(aes(x = x, y = predicted)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed") +
+  labs(x = "Mass ratio (Predator:Prey)", y = "\u0394 Community stability") +
+  scale_x_continuous(expand = c(0,0)) +
+  theme_classic()
+
+m8_tlvl = ggpredict(m8, "tlvl_mean_1 [1:6, by = 0.1]", back_transform = F)
+plt_m8_tlvl = ggplot(m8_tlvl) +
+  geom_line(aes(x = x, y = predicted)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed") +
+  labs(x = "Trophic level (mean)", y = "\u0394 Community stability") +
+  scale_x_continuous(expand = c(0,0)) +
+  theme_classic()
+
+# Needs transformation
+m8_cv_com = ggpredict(m8, "stab_com_1 [0.1:30, by = 0.1]", back_transform = F)
+plt_m8_cv_com = ggplot(m8_cv_com) +
+  geom_line(aes(x = exp(x), y = predicted)) +
+  geom_ribbon(aes(x = exp(x), ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed") +
+  labs(x = "Community stability (1/CV)", y = "\u0394 Community stability") +
+  scale_x_log10(expand = c(0,0)) +
+  theme_classic()
+
+
+m8_g = ggpredict(m8, "g_1 [0:20, by = 0.1]", back_transform = F)
+plt_m8_g = ggplot(m8_g) +
+  geom_line(aes(x = x, y = predicted)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed") +
+  labs(x = "Predator interactions", y = "\u0394 Community stability") +
+  scale_x_continuous(expand = c(0,0)) +
+  theme_classic()
+
+m8_c_s = ggpredict(m8, terms = c("realised_C_1 [0:0.3, by = 0.01]", "realised_S_1 [5, 15, 50]"), back_transform = F)
+plt_m8_c_s = ggplot(m8_c_s) +
+  geom_line(aes(x = x, y = predicted, colour = group)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high, fill = group), alpha = 0.4) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed") +
+  labs(x = "Connectance", y = "\u0394 Community stability") +
+  scale_fill_manual(values = palette_3, name = "Richness") +
+  scale_colour_manual(values = palette_3, name = "Richness") +
+  scale_x_continuous(expand = c(0,0)) +
+  theme_classic() +
+  theme(legend.position = "bottom")
+
+ggarrange(
+  ggarrange(plt_m8_z, plt_m8_tlvl, plt_m8_g, plt_m8_cv_com, ncol = 2, nrow = 2, align = "h", labels = c("A", "B", "C", "D"), heights = c(1)),
+  plt_m8_c_s, 
+  ncol = 2, nrow = 1, widths = c(1,0.7), labels = c("", "E"))
+
+
+
+```
+
+### Model 9 - Change in community stability post-reintroduction
+
+```{r m9, warning=F, message = F, fig.width = 11, fig.height = 9.5}
+
+m9 = lm(log(delta_stabc_32) ~  realised_C_1*realised_S_1 + delta_s_21 + g_1 + z_1 + tlvl_mean_1 + delta_sp_32 + stab_com_2, data = sims)
+summary(m9)
+
+
+
+m9_z = ggpredict(m9, "z_1 [1:1000, by = 5]", back_transform = F)
+plt_m9_z = ggplot(m9_z) +
+  geom_line(aes(x = x, y = predicted)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed") +
+  labs(x = "Mass ratio (Predator:Prey)", y = "\u0394 Community stability") +
+  scale_x_continuous(expand = c(0,0)) +
+  theme_classic()
+
+m9_tlvl = ggpredict(m9, "tlvl_mean_1 [1:6, by = 0.1]", back_transform = F)
+plt_m9_tlvl = ggplot(m9_tlvl) +
+  geom_line(aes(x = x, y = predicted)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed") +
+  labs(x = "Trophic level (mean)", y = "\u0394 Community stability") +
+  scale_x_continuous(expand = c(0,0)) +
+  theme_classic()
+
+# Needs transformation
+m9_cv_com = ggpredict(m9, "stab_com_2 [0.1:30, by = 0.1]", back_transform = F)
+plt_m9_cv_com = ggplot(m9_cv_com) +
+  geom_line(aes(x = exp(x), y = predicted)) +
+  geom_ribbon(aes(x = exp(x), ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed") +
+  labs(x = "Community stability (1/CV)", y = "\u0394 Community stability") +
+  scale_x_log10(expand = c(0,0)) +
+  theme_classic()
+
+m9_deltas_21 = ggpredict(m9, "delta_s_21 [0.1:1, by = 0.01]", back_transform = F)
+plt_m9_deltas_21 = ggplot(m9_deltas_21) +
+  geom_line(aes(x = x, y = predicted)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed") +
+  labs(x = "Persistance (post-extirpation)", y = "\u0394 Community stability") +
+  scale_x_continuous(expand = c(0,0)) +
+  theme_classic()
+
+m9_deltasp_32 = ggpredict(m9, "delta_sp_32 [0.1:1, by = 0.01]", back_transform = F)
+plt_m9_deltasp_32 = ggplot(m9_deltasp_32) +
+  geom_line(aes(x = x, y = predicted)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed") +
+  labs(x = "Probability population reestabilshes", y = "\u0394 Community stability") +
+  scale_x_continuous(expand = c(0,0)) +
+  theme_classic()
+
+m9_g = ggpredict(m9, "g_1 [0:20, by = 0.1]", back_transform = F)
+plt_m9_g = ggplot(m9_g) +
+  geom_line(aes(x = x, y = predicted)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high), alpha = 0.1) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed") +
+  labs(x = "Predator interactions", y = "\u0394 Community stability") +
+  scale_x_continuous(expand = c(0,0)) +
+  theme_classic()
+
+m9_c_s = ggpredict(m9, terms = c("realised_C_1 [0:0.3, by = 0.01]", "realised_S_1 [5, 15, 50]"), back_transform = F)
+plt_m9_c_s = ggplot(m9_c_s) +
+  geom_line(aes(x = x, y = predicted, colour = group)) +
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high, fill = group), alpha = 0.4) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed") +
+  labs(x = "Connectance", y = "\u0394 Community stability") +
+  scale_fill_manual(values = palette_3, name = "Richness") +
+  scale_colour_manual(values = palette_3, name = "Richness") +
+  scale_x_continuous(expand = c(0,0)) +
+  theme_classic() +
+  theme(legend.position = "bottom")
+
+
+ggarrange(
+  ggarrange(plt_m9_z, plt_m9_tlvl, plt_m9_g, plt_m9_deltas_21, plt_m9_cv_com, plt_m9_deltasp_32, ncol = 2, nrow = 3, align = "h", labels = c("A", "B", "C", "D", "E", "F"), heights = c(1)),
+  plt_m9_c_s, 
+  ncol = 2, nrow = 1, widths = c(1,0.7), labels = c("", "G"))
+
+
+```
+
+### Synthesise - Synthesis of effect size
+
+```{r synth, warning=F, message = F, fig.width = 11, fig.height = 9.5}
+
+synth = data.frame(
+  model = c(
+    rep("Probability population restablishes", 8), 
+    rep("\u0394 Population stability", 8),
+    rep("\u0394 Predator biomass", 8),
+    rep("Pesistance (post-extirpation)", 7),
+    rep("Pesistance (post-reintroduction)", 9),
+    rep("\u0394 Community biomass (post-extirpation)", 7),
+    rep("\u0394 Community biomass  (post-reintroduction)", 9),
+    rep("\u0394 Community stability (post-extirpation)", 7),
+    rep("\u0394 Community stability  (post-reintroduction)", 9)
+    
+  ),
+  variable = c(
+    names(summary(m1)$coefficients[-1,3]),
+    names(summary(m2)$coefficients[-1,3]),
+    names(summary(m3)$coefficients[-1,3]),
+    names(summary(m4)$p.coeff[-1]),
+    names(summary(m5)$p.coeff[-1]),
+    names(summary(m6)$coefficients[-1,3]),
+    names(summary(m7)$coefficients[-1,3]),
+    names(summary(m8)$coefficients[-1,3]),
+    names(summary(m9)$coefficients[-1,3])
+    ),
+  coef = c(
+    summary(m1)$coefficients[-1,1],
+    summary(m2)$coefficients[-1,1],
+    summary(m3)$coefficients[-1,1],
+    summary(m4)$p.coeff[-1],
+    summary(m5)$p.coeff[-1],
+    summary(m6)$coefficients[-1,1],
+    summary(m7)$coefficients[-1,1],
+    summary(m8)$coefficients[-1,1],
+    summary(m9)$coefficients[-1,1]
+  ),
+    error = c(
+    summary(m1)$coefficients[-1,2],
+    summary(m2)$coefficients[-1,2],
+    summary(m3)$coefficients[-1,2],
+    summary(m4)$se[-1],
+    summary(m5)$se[-1],
+    summary(m6)$coefficients[-1,2],
+    summary(m7)$coefficients[-1,2],
+    summary(m8)$coefficients[-1,2],
+    summary(m9)$coefficients[-1,2]
+  )
+  
+)
+synth$test_stat = synth$coef/synth$error
+synth$test_stat2 = synth$test_stat
+synth$test_stat2 = ifelse(synth$test_stat2 > 10, 10, synth$test_stat2)
+synth$test_stat2 = ifelse(synth$test_stat2 < -10, -10, synth$test_stat2)
+
+synth2 = expand.grid(model = unique(synth$model), variable = unique(synth$variable))
+synth2 = left_join(synth2, synth)
+
+variable_rename = data.frame(
+  variable = unique(synth2$variable),
+  variable2 = c("Connectance",
+                "Richness",
+                "Predator interations",
+                "Predator interaction intactness",
+                "Persistance (post-extirpation)",
+                "Mass ratio (Predator:Prey)",
+                "Connectance : Richness",
+                "Predator interactions: Predator interaction intactness",
+                "Community stability (intact)",
+                "Trophic level (mean)",
+                "Probability population reestablishes",
+                "Community stability (post-extirpation)"
+                )
+)
+synth2 = left_join(synth2, variable_rename)
+
+ggplot(synth2) +
+  geom_tile(aes(x = variable2, y = model, fill = test_stat2)) +
+  scale_fill_gradient2(low = scales::muted("darkblue"), high = scales::muted("darkred"), na.value = "grey20", mid = "white", midpoint = 0, breaks = c(-10,-5,0,5,10), name = "Test-statistic\n") +
+  scale_x_discrete(expand = c(0,0)) +
+  scale_y_discrete(expand = c(0,0)) +
+  labs(x = "", y = "") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90),
+        panel.background = element_rect(fill = scales::muted("darkred")),
+        legend.position = "bottom")
+
+```
+```{r scenario_extirpation, warning=F, message = F, fig.width = 11, fig.height = 9.5}
+
+scen_df = data.frame(
+  scen = c("Tall", "Short", "Large", "Small", "Large", "Small", "Intact", "Depleted", "Strong", "Weak", "High", "Low", "High", "Low"),
+  fac = c("Food-web\ntrophic-height", "Food-web\ntrophic-height", "Mass ratio\nPredator:Prey", "Mass ratio\nPredator:Prey", "Predator\ndiet-breadth", "Predator\ndiet-breadth", "Community\nintactness", "Community\nintactness" , "Community\nconnectance", "Community\nconnectance", "Predator\nsurvival probability", "Predator\nsurvival probability", "Prey\nintactness", "Prey\nintactness"),
+  tlvl_mean_1 = c(quantile(sims$tlvl_mean_1, probs = 0.1), quantile(sims$tlvl_mean_1, probs = 0.9), rep(mean(sims$tlvl_mean_1), 12)),
+    z_1 = c(rep(mean(sims$z_1), 2), quantile(sims$z_1, probs = 0.9), quantile(sims$z_1, probs = 0.1) , rep(mean(sims$z_1), 10)),
+     g_1 = c(rep(mean(sims$g_1), 4), quantile(sims$g_1, probs = 0.9), quantile(sims$g_1, probs = 0.1), rep(mean(sims$g_1), 8)),
+    delta_s_21 = c(rep(mean(sims$delta_s_21), 6), 1, 0.5, rep(mean(sims$delta_s_21), 6)),
+    realised_C_1 = c(rep(mean(sims$realised_C_1), 8), quantile(sims$realised_C_1, probs = 0.3), quantile(sims$realised_C_1, probs = 0.1), rep(mean(sims$realised_C_1), 4)),
+  realised_S_1 =  c(rep(50, 14)),
+  delta_sp_32 = c(rep(mean(sims$delta_sp_32), 10),0, quantile(sims$delta_sp_32, probs = 0.9), rep(mean(sims$delta_sp_32), 2)),
+  delta_g_31 = c(rep(mean(sims$delta_g_31), 12), 1, 0.5),
+  stab_com_1 = c(rep(mean(sims$stab_com_1), 14)),
+  stab_com_2 = c(rep(mean(sims$stab_com_2), 14))
+)
+
+m1_pred = predict(m1, newdata = scen_df, se.fit = TRUE)
+scen_df$m1_pred = predict(m1, newdata = scen_df, se.fit = F, type = "response")
+scen_df$m1_low = with(m1_pred, plogis(fit + qnorm(0.025)*se.fit))
+scen_df$m1_upr = with(m1_pred, plogis(fit + qnorm(0.975)*se.fit))
+
+m2_pred = predict(m2, newdata = scen_df, se.fit=TRUE, interval="confidence", level=0.95)
+scen_df$m2_pred = m2_pred$fit[,1]
+scen_df$m2_low = m2_pred$fit[,2]
+scen_df$m2_upr = m2_pred$fit[,3]
+
+scen_df$var_mn = exp(scen_df$m2_pred) * 0.1 #Mean stab = 0.1 / CV = 10%
+scen_df$var_low = exp(scen_df$m2_low) * 0.1
+scen_df$var_upr = exp(scen_df$m2_upr) * 0.1
+
+m3_pred = predict(m3, newdata = scen_df, se.fit=TRUE, interval="confidence", level=0.95)
+scen_df$m3_pred = m3_pred$fit[,1]
+scen_df$m3_low = m3_pred$fit[,2]
+scen_df$m3_upr = m3_pred$fit[,3]
+
+scen_df$ab_mn = exp(scen_df$m3_pred) * 10 #Mean abundance = 1
+scen_df$ab_low = exp(scen_df$m3_low) * 10
+scen_df$ab_upr = exp(scen_df$m3_upr) * 10
+
+m4_pred = predict(m4, newdata = scen_df, se.fit = TRUE)
+scen_df$m4_pred = as.vector(predict(m4, newdata = scen_df, se.fit = F, type = "response"))
+scen_df$m4_low = as.vector(with(m4_pred, plogis(fit + qnorm(0.025)*se.fit)))
+scen_df$m4_upr = as.vector(with(m4_pred, plogis(fit + qnorm(0.975)*se.fit)))
+
+scen_df$rich_mn = scen_df$m4_pred * 50 #50 species
+scen_df$rich_low = scen_df$m4_low * 50
+scen_df$rich_upr = scen_df$m4_upr * 50
+
+m5_pred = predict(m5, newdata = scen_df, se.fit = TRUE)
+scen_df$m5_pred = predict(m5, newdata = scen_df, se.fit = F, type = "response")
+scen_df$m5_low = with(m5_pred, plogis(fit + qnorm(0.025)*se.fit))
+scen_df$m5_upr = with(m5_pred, plogis(fit + qnorm(0.975)*se.fit))
+
+scen_df$rich2_mn = scen_df$m5_pred * scen_df$rich_mn 
+scen_df$rich2_low = scen_df$m5_low * scen_df$rich_low
+scen_df$rich2_upr = scen_df$m5_upr * scen_df$rich_upr
+
+m6_pred = predict(m6, newdata = scen_df, se.fit=TRUE, interval="confidence", level=0.95)
+scen_df$m6_pred = m6_pred$fit[,1]
+scen_df$m6_low = m6_pred$fit[,2]
+scen_df$m6_upr = m6_pred$fit[,3]
+
+scen_df$bio_mn = exp(scen_df$m6_pred) * 100 #100kg biomass
+scen_df$bio_low = exp(scen_df$m6_low) * 100
+scen_df$bio_upr = exp(scen_df$m6_upr) * 100
+
+m7_pred = predict(m7, newdata = scen_df, se.fit=TRUE, interval="confidence", level=0.95)
+scen_df$m7_pred = m7_pred$fit[,1]
+scen_df$m7_low = m7_pred$fit[,2]
+scen_df$m7_upr = m7_pred$fit[,3]
+
+scen_df$bio2_mn = exp(scen_df$m7_pred) * scen_df$bio_mn
+scen_df$bio2_low = exp(scen_df$m7_low) * scen_df$bio_low
+scen_df$bio2_upr = exp(scen_df$m7_upr) * scen_df$bio_upr
+
+m8_pred = predict(m8, newdata = scen_df, se.fit=TRUE, interval="confidence", level=0.95)
+scen_df$m8_pred = m8_pred$fit[,1]
+scen_df$m8_low = m8_pred$fit[,2]
+scen_df$m8_upr = m8_pred$fit[,3]
+
+scen_df$stab_mn = exp(scen_df$m8_pred) * 0.1 #0.1 stability is 10%cv average
+scen_df$stab_low = exp(scen_df$m8_low) * 0.1
+scen_df$stab_upr = exp(scen_df$m8_upr) * 0.1
+
+m9_pred = predict(m9, newdata = scen_df, se.fit=TRUE, interval="confidence", level=0.95)
+scen_df$m9_pred = m9_pred$fit[,1] 
+scen_df$m9_low = m9_pred$fit[,2]
+scen_df$m9_upr = m9_pred$fit[,3]
+
+scen_df$stab2_mn = exp(scen_df$m9_pred) * scen_df$stab_mn #Mean abundance = 1
+scen_df$stab2_low = exp(scen_df$m9_low) * scen_df$stab_low
+scen_df$stab2_upr = exp(scen_df$m9_upr) * scen_df$stab_upr
+
+
+
+plt_a = ggplot() +
+  geom_point(aes(x = "Average\ncommunity", y = 50), colour = "grey30", size = 2.5) +
+  geom_hline(aes(yintercept = 50), linetype = "dashed") +
+  labs(x = "", y = "Species richness", title = "Intact") +
+  scale_y_continuous(expand = c(0,0), limits = c(40,51)) +
+  facet_grid(. ~ "", scales = "free") +
+  theme_classic() +
+  theme(strip.background = element_rect(color="white", fill="white", size=1.5, linetype="solid"))
+
+plt_b = ggplot(data = scen_df) +
+  geom_pointrange(aes(x = scen, y = rich_mn, ymin = rich_low, ymax = rich_upr, colour = fac), size = 0.5) +
+  geom_hline(aes(yintercept = 50), linetype = "dashed") +
+  labs(x = "", y = "", title = "Post-extirpation") +
+  scale_y_continuous(expand = c(0,0), limits = c(40,51)) +
+  scale_colour_manual(values = palette_7, name = "", guide = F) +
+  facet_grid(. ~ fac, drop = T, scales = "free") +
+  theme_classic() +
+  theme(
+    legend.position = "bottom",
+    axis.text.y = element_blank(),
+    axis.line.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    strip.background = element_rect(color="white",size=1.5, linetype="solid")
+  )
+
+plt_c = ggplot() +
+  geom_point(aes(x = "Average\ncommunity", y = 100), colour = "grey30", size = 2.5) +
+  geom_hline(aes(yintercept = 100), linetype = "dashed") +
+  labs(x = "", y = "Biomass", title = "") +
+  scale_y_continuous(expand = c(0,0), limits = c(80,140)) +
+  facet_grid(. ~ "", scales = "free") +
+  theme_classic() +
+  theme(strip.background = element_rect(color="white", fill="white", size=1.5, linetype="solid"))
+
+plt_d = ggplot(data = scen_df) +
+  geom_pointrange(aes(x = scen, y = bio_mn, ymin = bio_low, ymax = bio_upr, colour = fac), size = 0.5) +
+  geom_hline(aes(yintercept = 100), linetype = "dashed") +
+  labs(x = "", y = "", title = "") +
+  scale_y_continuous(expand = c(0,0), limits = c(80,140)) +
+  scale_colour_manual(values = palette_7, name = "", guide = F) +
+  facet_grid(. ~ fac, drop = T, scales = "free") +
+  theme_classic() +
+  theme(
+    legend.position = "bottom",
+    axis.text.y = element_blank(),
+    axis.line.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    strip.background = element_rect(color="white",size=1.5, linetype="solid"),
+    strip.text.x = element_text(
+        size = 2, color = "white", face = "bold.italic"
+        )
+  )
+
+plt_e = ggplot() +
+  geom_point(aes(x = "Average\ncommunity", y = 0.1), colour = "grey30", size = 2.5) +
+  geom_hline(aes(yintercept = 0.1), linetype = "dashed") +
+  labs(x = "", y = "Stability", title = "") +
+  scale_y_log10(expand = c(0,0), limits = c(0.00001, 1), breaks = c(1e-4, 1e-3, 1e-2, 1e-1,1), labels=function(x) parse(text=paste("10^",round(log10(x),2)))) +
+  facet_grid(. ~ "", scales = "free") +
+  theme_classic() +
+  theme(strip.background = element_rect(color="white", fill="white", size=1.5, linetype="solid"))
+
+plt_f = ggplot(data = scen_df) +
+  geom_pointrange(aes(x = scen, y = stab_mn, ymin = stab_low, ymax = stab_upr, colour = fac), size = 0.5) +
+  geom_hline(aes(yintercept = 0.1), linetype = "dashed") +
+  labs(x = "", y = "", title = "") +
+  scale_y_log10(expand = c(0,0), limits = c(0.00001, 1)) +
+  scale_colour_manual(values = palette_7, name = "", guide = F) +
+  facet_grid(. ~ fac, drop = T, scales = "free") +
+  theme_classic() +
+  theme(
+    legend.position = "bottom",
+    axis.text.y = element_blank(),
+    axis.line.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    strip.background = element_rect(color="white",size=1.5, linetype="solid"),
+    strip.text.x = element_text(
+        size = 2, color = "white", face = "bold.italic"
+        )
+  )
+
+
+
+ggarrange(plt_a, plt_b, plt_c, plt_d, plt_e, plt_f, ncol = 2, nrow = 3, widths = c(1.5, 8), align = "hv", common.legend = T, legend = "bottom")
+
+
+```
+
+
+```{r scenario_population, warning=F, message = F, fig.width = 11, fig.height = 9.5}
+
+
+
+plt_a = ggplot() +
+  geom_point(aes(x = "Average\npredator", y = 1), colour = "grey30", size = 2.5) +
+  geom_hline(aes(yintercept = 1), linetype = "dashed") +
+  labs(x = "", y = "Probability predator\nis extant", title = "Intact") +
+  scale_y_continuous(expand = c(0,0), limits = c(0.8,1.01)) +
+  facet_grid(. ~ "", scales = "free") +
+  theme_classic() +
+  theme(strip.background = element_rect(color="white", fill="white", size=1.5, linetype="solid"))
+
+plt_b = ggplot(data = scen_df) +
+  geom_pointrange(aes(x = scen, y = m1_pred, ymin = m1_low, ymax = m1_upr, colour = fac), size = 0.5) +
+  geom_hline(aes(yintercept = 1), linetype = "dashed") +
+  labs(x = "", y = "", title = "Post-reintroduction") +
+  scale_y_continuous(expand = c(0,0), limits = c(0.8,1.01)) +
+  scale_colour_manual(values = palette_7, name = "", guide = F) +
+  facet_grid(. ~ fac, drop = T, scales = "free") +
+  theme_classic() +
+  theme(
+    legend.position = "bottom",
+    axis.text.y = element_blank(),
+    axis.line.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    strip.background = element_rect(color="white",size=1.5, linetype="solid")
+  )
+
+
+
+plt_c = ggplot() +
+  geom_point(aes(x = "Average\npredator", y = 10), colour = "grey30", size = 2.5) +
+  geom_hline(aes(yintercept = 10), linetype = "dashed") +
+  labs(x = "", y = "Predator\nabundance", title = "") +
+  scale_y_continuous(expand = c(0,0), limits = c(5,12)) +
+  facet_grid(. ~ "", scales = "free") +
+  theme_classic() +
+  theme(strip.background = element_rect(color="white", fill="white", size=1.5, linetype="solid"))
+
+
+plt_d = ggplot(data = scen_df) +
+  geom_pointrange(aes(x = scen, y = ab_mn, ymin = ab_low, ymax = ab_upr, colour = fac), size = 0.5) +
+  geom_hline(aes(yintercept = 10), linetype = "dashed") +
+  labs(x = "", y = "", title = "") +
+  scale_y_continuous(expand = c(0,0), limits = c(5, 12)) +
+  scale_colour_manual(values = palette_7, name = "", guide = F) +
+  facet_grid(. ~ fac, drop = T, scales = "free") +
+  theme_classic() +
+  theme(
+    legend.position = "bottom",
+    axis.text.y = element_blank(),
+    axis.line.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    strip.background = element_rect(color="white",size=1.5, linetype="solid"),
+    strip.text.x = element_text(
+        size = 2, color = "white", face = "bold.italic"
+        )
+  )
+
+
+plt_e = ggplot() +
+  geom_point(aes(x = "Average\npredator", y = 0.1), colour = "grey30", size = 2.5) +
+  geom_hline(aes(yintercept = 0.1), linetype = "dashed") +
+  labs(x = "", y = "Predator stability (log-10)", title = "") +
+  scale_y_log10(expand = c(0,0), limits = c(0.01,10)) +
+  facet_grid(. ~ "", scales = "free") +
+  theme_classic() +
+  theme(strip.background = element_rect(color="white", fill="white", size=1.5, linetype="solid"))
+
+plt_f = ggplot(data = scen_df) +
+  geom_pointrange(aes(x = scen, y = var_mn, ymin = var_low, ymax = var_upr, colour = fac), size = 0.5) +
+  geom_hline(aes(yintercept = 0.1), linetype = "dashed") +
+  labs(x = "", y = "", title = "") +
+  scale_y_log10(expand = c(0,0), limits = c(0.01, 10)) +
+  scale_colour_manual(values = palette_7, name = "", guide = F) +
+  facet_grid(. ~ fac, drop = T, scales = "free") +
+  theme_classic() +
+  theme(
+    legend.position = "bottom",
+    axis.text.y = element_blank(),
+    axis.line.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    strip.background = element_rect(color="white",size=1.5, linetype="solid"),
+    strip.text.x = element_text(
+        size = 2, color = "white", face = "bold.italic"
+        )
+  )
+
+
+ggarrange(plt_a, plt_b, plt_c, plt_d, plt_e, plt_f, ncol = 2, nrow = 3, widths = c(1.5, 8), align = "hv", common.legend = T, legend = "bottom")
+
+
+
+```
+
+```{r scenario_reintro, warning=F, message = F, fig.width = 11, fig.height = 9.5}
+
+plt_a = ggplot() +
+  geom_point(aes(x = "Average\ncommunity", y = 50), colour = "grey30", size = 2.5) +
+  geom_hline(aes(yintercept = 50), linetype = "dashed") +
+  labs(x = "", y = "Species richness", title = "Intact") +
+  scale_y_continuous(expand = c(0,0), limits = c(40,51)) +
+  facet_grid(. ~ "", scales = "free") +
+  theme_classic() +
+  theme(strip.background = element_rect(color="white", fill="white", size=1.5, linetype="solid"),
+        plot.title = element_text(size=10, face = "bold"))
+
+plt_b = ggplot(data = scen_df) +
+  geom_pointrange(aes(x = scen, y = rich_mn, ymin = rich_low, ymax = rich_upr, colour = fac), size = 0.5, alpha = 0.3) +
+  geom_pointrange(aes(x = scen, y = rich2_mn, ymin = rich2_low, ymax = rich2_upr, colour = fac), size = 0.5, position = position_nudge(x = 0.2), shape = 15) +
+  geom_hline(aes(yintercept = 50), linetype = "dashed") +
+  labs(x = "", y = "", title = "Post-reintroduction") +
+  scale_y_continuous(expand = c(0,0), limits = c(40,51)) +
+  scale_colour_manual(values = palette_7, name = "", guide = F) +
+  facet_grid(. ~ fac, drop = T, scales = "free") +
+  theme_classic() +
+  theme(
+    legend.position = "bottom",
+    axis.text.y = element_blank(),
+    axis.line.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    strip.background = element_rect(color="white",size=1.5, linetype="solid"),
+        plot.title = element_text(size=10, face = "bold")
+  )
+
+plt_c = ggplot() +
+  geom_point(aes(x = "Average\ncommunity", y = 100), colour = "grey30", size = 2.5) +
+  geom_hline(aes(yintercept = 100), linetype = "dashed") +
+  labs(x = "", y = "Biomass", title = "") +
+  scale_y_continuous(expand = c(0,0), limits = c(80,140)) +
+  facet_grid(. ~ "", scales = "free") +
+  theme_classic() +
+  theme(strip.background = element_rect(color="white", fill="white", size=1.5, linetype="solid"))
+
+plt_d = ggplot(data = scen_df) +
+  geom_pointrange(aes(x = scen, y = bio_mn, ymin = bio_low, ymax = bio_upr, colour = fac), size = 0.5, alpha = 0.3) +
+  geom_pointrange(aes(x = scen, y = bio2_mn, ymin = bio2_low, ymax = bio2_upr, colour = fac), size = 0.5, position = position_nudge(x = 0.2), shape = 15) +
+  geom_hline(aes(yintercept = 100), linetype = "dashed") +
+  labs(x = "", y = "", title = "") +
+  scale_y_continuous(expand = c(0,0), limits = c(80,140)) +
+  scale_colour_manual(values = palette_7, name = "", guide = F) +
+  facet_grid(. ~ fac, drop = T, scales = "free") +
+  theme_classic() +
+  theme(
+    legend.position = "bottom",
+    axis.text.y = element_blank(),
+    axis.line.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    strip.background = element_rect(color="white",size=1.5, linetype="solid"),
+    strip.text.x = element_text(
+        size = 2, color = "white", face = "bold.italic"
+        )
+  )
+
+plt_e = ggplot() +
+  geom_point(aes(x = "Average\ncommunity", y = 0.1), colour = "grey30", size = 2.5) +
+  geom_hline(aes(yintercept = 0.1), linetype = "dashed") +
+  labs(x = "", y = "Stability", title = "") +
+  scale_y_log10(expand = c(0,0), limits = c(0.00001,1), breaks = c(1e-4, 1e-3, 1e-2, 1e-1,1), labels=function(x) parse(text=paste("10^",round(log10(x),2)))) +
+  facet_grid(. ~ "", scales = "free") +
+  theme_classic() +
+  theme(strip.background = element_rect(color="white", fill="white", size=1.5, linetype="solid"))
+
+plt_f = ggplot(data = scen_df) +
+  geom_pointrange(aes(x = scen, y = stab_mn, ymin = stab_low, ymax = stab_upr, colour = fac), size = 0.5, alpha = 0.3) +
+  geom_pointrange(aes(x = scen, y = stab2_mn, ymin = stab2_low, ymax = stab2_upr, colour = fac), size = 0.5, position = position_nudge(x = 0.2), shape = 15) +
+  geom_hline(aes(yintercept = 0.1), linetype = "dashed") +
+  labs(x = "", y = "", title = "") +
+  scale_y_log10(expand = c(0,0), limits = c(0.00001, 1)) +
+  scale_colour_manual(values = palette_7, name = "", guide = F) +
+  facet_grid(. ~ fac, drop = T, scales = "free") +
+  theme_classic() +
+  theme(
+    legend.position = "bottom",
+    axis.text.y = element_blank(),
+    axis.line.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    strip.background = element_rect(color="white",size=1.5, linetype="solid"),
+    strip.text.x = element_text(
+        size = 2, color = "white", face = "bold.italic"
+        )
+  )
+
+
+
+ggarrange(plt_a, plt_b, plt_c, plt_d, plt_e, plt_f, ncol = 2, nrow = 3, widths = c(1.5, 8), align = "hv", common.legend = T, legend = "bottom")
+
+```

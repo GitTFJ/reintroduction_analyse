@@ -109,19 +109,25 @@ sims$stab_com_1 <- log(sims$stab_com_1)
 sims$stab_com_2 <- log(sims$stab_com_2)
 ```
 
-Each row is one simulation trajectory across three phases: intact (1),
-extirpated (2) and reintroduced (3). Suffixes `21` and `32` denote ratios
-between consecutive phases; `31` compares reintroduced with intact. Evenness
-ratios can exceed one, so they are analysed with log-normal linear models,
-not beta regression. `data/DATA_DICTIONARY.csv` describes the input columns.
+The table shows how we selected the simulations used in the analysis. The
+input contained `r nrow(raw)` simulation records. We excluded
+`r nrow(raw) - nrow(finite_biomass_ratio)` records with missing or infinite
+ratios of reintroduced to intact predator biomass, leaving
+`r nrow(finite_biomass_ratio)` records. We then retained the
+`r nrow(sims)` baseline simulations in which we imposed no change in the
+predator's feeding links, excluding the scenarios that added or removed links.
 
-The analysis applies a global finite-predator-biomass-ratio filter.
-Before that filter there are `r sum(is.na(raw$nb_link))` baseline records;
-`r sum(is.na(raw$nb_link) & !is.finite(raw$delta_bmp_31))` are excluded by it.
-Consequently, the binary establishment model is conditional on the retained
-analysis cohort, not every attempted simulation. This selection and missing
-simulation outputs should be considered when interpreting establishment rates.
+There were `r sum(is.na(raw$nb_link))` baseline records before the biomass-ratio
+filter, of which `r sum(is.na(raw$nb_link) & !is.finite(raw$delta_bmp_31))`
+were excluded. Our establishment estimates therefore describe the retained
+simulations rather than all attempted reintroductions, a limitation of the
+analysis.
 
+Each simulation record tracks an intact community (phase 1), predator
+extirpation (phase 2) and predator reintroduction (phase 3). Ratios labelled
+`21` compare extirpated with intact communities, `32` compare reintroduced
+with extirpated communities, and `31` compare reintroduced with intact
+communities. Variable definitions are provided in `data/DATA_DICTIONARY.csv`.
 
 # Eleven statistical models
 
@@ -198,14 +204,11 @@ evenness respectively. These are associations within the simulated ensemble.
 In particular, conditioning on predator survival in community models does
 not estimate a randomised causal effect of survival.
 
-The richness regressions use `mgcv::betar`,
-including its default endpoint adjustment: exact zero/one proportions are
-moved just inside the unit interval (`eps = 100 * .Machine$double.eps`).
-There are `r sum(sims$delta_s_21 == 1)` exact-one extirpation ratios and
-`r sum(sims$delta_s_32 == 1)` exact-one reintroduction ratios. This substantial
-boundary mass is a limitation of the beta models; a boundary-aware
-alternative would be a separate sensitivity analysis.
-
+We modelled richness ratios using beta regression, with proportions of zero
+or one adjusted just inside the unit interval. Richness was unchanged in
+`r sum(sims$delta_s_21 == 1)` extirpation transitions and
+`r sum(sims$delta_s_32 == 1)` reintroduction transitions. This concentration
+of observations at one is a limitation of the beta models.
 
 # Explicit manuscript scenarios
 
@@ -392,150 +395,12 @@ community_predictions <- do.call(rbind, lapply(names(community_pairs), function(
 write.csv(community_predictions, file.path(out_dir, "community_predictions.csv"), row.names = FALSE)
 ```
 
-The paired bootstrap uses `r sum(valid_boot)` successful resamples out of
-`r B`, with seed `r params$seed`. It resamples whole simulation records, not
-time steps. It assumes the retained simulation records can be treated as
-independent sampling units. It does not include uncertainty in the chosen
-reference profile or in the underlying food-web parameterisation. More
-replicates can be requested through the `bootstrap_replicates` parameter.
-
-`r sum(nzchar(bootstrap_warnings))` resamples generated numerical warnings,
-recorded in `bootstrap_status.csv`. In particular, saturated-likelihood
-warnings from the inherited beta family must be considered alongside the
-large mass at persistence = 1; convergence alone does not establish that
-this distributional specification is appropriate.
-
-```{r bootstrap-warning-summary}
-warning_counts <- table(bootstrap_warnings[nzchar(bootstrap_warnings)])
-if (length(warning_counts)) knitr::kable(data.frame(
-  warning = names(warning_counts), replicates = as.integer(warning_counts)))
-```
-
-
-# Results figures
-
-```{r figure-functions}
-# A shared plotting function makes row order, colours, symbols and labels
-# consistent across all three figures. Error bars are never clipped by hard
-# y-limits; scale differences are allowed where the new results require them.
-scenario_colours <- setNames(c("#1c355e", "#719891", "#c9b3ab", "#9e1420",
-                               "#ef7800", "#6fa5bc", "#ab746d"), scenario_spec$factor)
-plot_row <- function(data, metric, ref, letter, comparison = FALSE, top = FALSE,
-                     probability = FALSE, population = FALSE) {
-  data$factor <- droplevels(data$factor)
-  data$alpha <- if (comparison) ifelse(data$stage == "Post-extirpation", .35, 1) else 1
-  data$shape <- if (comparison) ifelse(data$stage == "Post-extirpation", 16, 15) else 16
-  data$x <- data$position + if (comparison) ifelse(data$stage == "Post-extirpation", -.07, .07) else 0
-  panel <- ggplot(data, aes(x = x, y = estimate, colour = factor)) +
-    geom_hline(yintercept = ref, linetype = "dashed", linewidth = .35, colour = "grey25") +
-    geom_linerange(aes(ymin = lower, ymax = upper, alpha = alpha), linewidth = .35) +
-    geom_point(aes(shape = shape, alpha = alpha), size = 2.4) +
-    scale_colour_manual(values = scenario_colours, guide = "none") +
-    scale_alpha_identity() + scale_shape_identity() +
-    facet_grid(. ~ factor) +
-    # Scenario-specific labels share numeric positions, so use a separate
-    # text layer instead of forcing identical x labels in every facet.
-    scale_x_continuous(breaks = c(1, 2), labels = c("", ""), limits = c(.55, 2.45)) +
-    labs(x = NULL, y = NULL) +
-    theme_classic(base_size = 10) +
-    theme(strip.background = element_blank(),
-          strip.text = if (top) element_text(size = 8) else element_blank(),
-          axis.line.y = element_blank(), axis.ticks.y = element_blank(),
-          axis.text.y = element_blank(), axis.ticks.x = element_blank(),
-          axis.text.x = element_blank(), panel.spacing.x = grid::unit(.14, "in"),
-          plot.margin = margin(2, 4, 15, 2))
-  labels <- unique(data[c("factor", "setting", "position")])
-  labels$label_y <- if (metric == "Stability")
-    10^floor(min(log10(c(data$lower, data$upper, ref))) - .05) else -Inf
-  panel <- panel + geom_text(data = labels,
-    aes(x = position, y = label_y, label = setting), inherit.aes = FALSE,
-    vjust = 1.5, size = 2.8) + coord_cartesian(clip = "off")
-  baseline <- ggplot(data.frame(x = 1, y = ref), aes(x, y)) +
-    geom_hline(yintercept = ref, linetype = "dashed", linewidth = .35, colour = "grey25") +
-    geom_point(size = 2.4, colour = "grey30") +
-    scale_x_continuous(breaks = 1,
-      labels = if (population) "Average\npredator" else "Average\ncommunity",
-      limits = c(.55, 1.45)) +
-    labs(x = NULL, y = metric, tag = letter) +
-    theme_classic(base_size = 10) + theme(plot.tag = element_text(face = "bold"),
-      plot.margin = margin(2, 4, 15, 4), axis.text.x = element_text(size = 8))
-  yrange <- range(c(data$lower, data$upper, ref), finite = TRUE)
-  if (metric == "Stability") {
-    # Positive log-scale limits include all data and the illustrative baseline.
-    logrange <- c(floor(min(log10(yrange)) - .05), ceiling(max(log10(yrange)) + .05))
-    log_breaks <- 10^seq(logrange[1], logrange[2])
-    log_labels <- function(x) parse(text = paste0("10^", round(log10(x))))
-    panel <- panel + scale_y_log10(limits = 10^logrange, breaks = log_breaks,
-      labels = log_labels, expand = expansion(mult = 0))
-    baseline <- baseline + scale_y_log10(limits = 10^logrange, breaks = log_breaks,
-      labels = log_labels, expand = expansion(mult = 0))
-  } else {
-    pad <- max(diff(yrange) * .15, abs(ref) * .04)
-    limits <- yrange + c(-pad, pad)
-    if (probability) limits <- c(max(0, limits[1]), min(1.01, limits[2]))
-    panel <- panel + scale_y_continuous(limits = limits)
-    baseline <- baseline + scale_y_continuous(limits = limits)
-  }
-  baseline + panel + plot_layout(widths = c(1.1, 2 * nlevels(data$factor)))
-}
-save_figure <- function(plot, stem, height) {
-  ggsave(file.path(out_dir, paste0(stem, ".pdf")), plot, width = 12, height = height,
-         device = grDevices::cairo_pdf)
-  ggsave(file.path(out_dir, paste0(stem, ".png")), plot, width = 12, height = height,
-         dpi = 300, bg = "white")
-}
-```
-
-## Figure 1: community responses to extirpation
-
-```{r figure-1, fig.height=8, fig.cap="Conditional community responses to predator extirpation. Four metrics and four scenario pairs follow the manuscript layout. Dots are model predictions; intervals are 95% paired-bootstrap intervals. Dashed lines show illustrative intact reference values. Stability uses a logarithmic axis."}
-extirpation_factors <- scenario_spec$factor[c(1, 3, 4, 5)]
-fig1_data <- subset(community_predictions,
-                    stage == "Post-extirpation" & factor %in% extirpation_factors)
-fig1_data$factor <- factor(fig1_data$factor, levels = extirpation_factors)
-fig1 <- wrap_plots(lapply(seq_along(community_pairs), function(i) {
-  metric <- names(community_pairs)[i]
-  plot_row(subset(fig1_data, metric == names(community_pairs)[i]), metric,
-           reference_values[[metric]], LETTERS[i], top = i == 1)
-}), ncol = 1) + plot_annotation(title = "Intact                                     Post-extirpation")
-save_figure(fig1, "figure_1_extirpation", 8)
-fig1
-```
-
-
-## Figure 2: predator responses to reintroduction
-
-```{r figure-2, fig.height=7, fig.cap="Predator establishment probability, biomass and temporal stability. Biomass and stability predictions are conditional on predator establishment. Intervals are pointwise 95% model confidence intervals, transformed from the link/log scale. The population reference values are probability 1, biomass 10 and inverse-CV stability 0.1."}
-population_predictions <- rbind(
-  transform(single_prediction("m1"), metric = "Establishment"),
-  transform(single_prediction("m3", 10), metric = "Biomass"),
-  transform(single_prediction("m2", .1), metric = "Stability"))
-write.csv(population_predictions, file.path(out_dir, "predator_predictions.csv"), row.names = FALSE)
-population_metrics <- c("Establishment", "Biomass", "Stability")
-population_reference <- c(Establishment = 1, Biomass = 10, Stability = .1)
-fig2 <- wrap_plots(lapply(seq_along(population_metrics), function(i) {
-  metric <- population_metrics[i]
-  plot_row(subset(population_predictions, metric == population_metrics[i]), metric,
-           population_reference[[metric]], LETTERS[i], top = i == 1,
-           probability = metric == "Establishment", population = TRUE)
-}), ncol = 1) + plot_annotation(title = "Intact                                     Post-reintroduction")
-save_figure(fig2, "figure_2_predator", 7)
-fig2
-```
-
-
-## Figure 3: community responses after reintroduction
-
-```{r figure-3, fig.height=9, fig.cap="Community responses on a common intact-reference scale. Transparent circles show post-extirpation predictions and opaque squares show post-reintroduction predictions. Reintroduction values combine both sequential model ratios. Intervals propagate their dependence using the paired bootstrap. "}
-fig3 <- wrap_plots(lapply(seq_along(community_pairs), function(i) {
-  metric <- names(community_pairs)[i]
-  plot_row(subset(community_predictions, metric == names(community_pairs)[i]), metric,
-           reference_values[[metric]], LETTERS[i], comparison = TRUE, top = i == 1)
-}), ncol = 1) + plot_annotation(title = "Intact                                     Post-extirpation / post-reintroduction")
-save_figure(fig3, "figure_3_reintroduction", 9)
-fig3
-```
-
+We estimated 95% confidence intervals from `r B` paired bootstrap resamples
+of simulation trajectories. We refitted both transition models in each
+resample to retain the dependence between their predictions. All
+`r sum(valid_boot)` resamples completed successfully. Saturated-likelihood
+warnings during beta-model fitting are a numerical limitation of these
+uncertainty estimates.
 
 # Marginal-effect plots
 
@@ -1310,6 +1175,131 @@ ggarrange(
   ncol = 2, nrow = 1, widths = c(1,0.7), labels = c("", "G"))
 
 ```
+
+# Results figures
+
+```{r figure-functions}
+# A shared plotting function makes row order, colours, symbols and labels
+# consistent across all three figures. Error bars are never clipped by hard
+# y-limits; scale differences are allowed where the new results require them.
+scenario_colours <- setNames(c("#1c355e", "#719891", "#c9b3ab", "#9e1420",
+                               "#ef7800", "#6fa5bc", "#ab746d"), scenario_spec$factor)
+plot_row <- function(data, metric, ref, letter, comparison = FALSE, top = FALSE,
+                     probability = FALSE, population = FALSE) {
+  data$factor <- droplevels(data$factor)
+  data$alpha <- if (comparison) ifelse(data$stage == "Post-extirpation", .35, 1) else 1
+  data$shape <- if (comparison) ifelse(data$stage == "Post-extirpation", 16, 15) else 16
+  data$x <- data$position + if (comparison) ifelse(data$stage == "Post-extirpation", -.07, .07) else 0
+  panel <- ggplot(data, aes(x = x, y = estimate, colour = factor)) +
+    geom_hline(yintercept = ref, linetype = "dashed", linewidth = .35, colour = "grey25") +
+    geom_linerange(aes(ymin = lower, ymax = upper, alpha = alpha), linewidth = .35) +
+    geom_point(aes(shape = shape, alpha = alpha), size = 2.4) +
+    scale_colour_manual(values = scenario_colours, guide = "none") +
+    scale_alpha_identity() + scale_shape_identity() +
+    facet_grid(. ~ factor) +
+    # Scenario-specific labels share numeric positions, so use a separate
+    # text layer instead of forcing identical x labels in every facet.
+    scale_x_continuous(breaks = c(1, 2), labels = c("", ""), limits = c(.55, 2.45)) +
+    labs(x = NULL, y = NULL) +
+    theme_classic(base_size = 10) +
+    theme(strip.background = element_blank(),
+          strip.text = if (top) element_text(size = 8) else element_blank(),
+          axis.line.y = element_blank(), axis.ticks.y = element_blank(),
+          axis.text.y = element_blank(), axis.ticks.x = element_blank(),
+          axis.text.x = element_blank(), panel.spacing.x = grid::unit(.14, "in"),
+          plot.margin = margin(2, 4, 15, 2))
+  labels <- unique(data[c("factor", "setting", "position")])
+  labels$label_y <- if (metric == "Stability")
+    10^floor(min(log10(c(data$lower, data$upper, ref))) - .05) else -Inf
+  panel <- panel + geom_text(data = labels,
+    aes(x = position, y = label_y, label = setting), inherit.aes = FALSE,
+    vjust = 1.5, size = 2.8) + coord_cartesian(clip = "off")
+  baseline <- ggplot(data.frame(x = 1, y = ref), aes(x, y)) +
+    geom_hline(yintercept = ref, linetype = "dashed", linewidth = .35, colour = "grey25") +
+    geom_point(size = 2.4, colour = "grey30") +
+    scale_x_continuous(breaks = 1,
+      labels = if (population) "Average\npredator" else "Average\ncommunity",
+      limits = c(.55, 1.45)) +
+    labs(x = NULL, y = metric, tag = letter) +
+    theme_classic(base_size = 10) + theme(plot.tag = element_text(face = "bold"),
+      plot.margin = margin(2, 4, 15, 4), axis.text.x = element_text(size = 8))
+  yrange <- range(c(data$lower, data$upper, ref), finite = TRUE)
+  if (metric == "Stability") {
+    # Positive log-scale limits include all data and the illustrative baseline.
+    logrange <- c(floor(min(log10(yrange)) - .05), ceiling(max(log10(yrange)) + .05))
+    log_breaks <- 10^seq(logrange[1], logrange[2])
+    log_labels <- function(x) parse(text = paste0("10^", round(log10(x))))
+    panel <- panel + scale_y_log10(limits = 10^logrange, breaks = log_breaks,
+      labels = log_labels, expand = expansion(mult = 0))
+    baseline <- baseline + scale_y_log10(limits = 10^logrange, breaks = log_breaks,
+      labels = log_labels, expand = expansion(mult = 0))
+  } else {
+    pad <- max(diff(yrange) * .15, abs(ref) * .04)
+    limits <- yrange + c(-pad, pad)
+    if (probability) limits <- c(max(0, limits[1]), min(1.01, limits[2]))
+    panel <- panel + scale_y_continuous(limits = limits)
+    baseline <- baseline + scale_y_continuous(limits = limits)
+  }
+  baseline + panel + plot_layout(widths = c(1.1, 2 * nlevels(data$factor)))
+}
+save_figure <- function(plot, stem, height) {
+  ggsave(file.path(out_dir, paste0(stem, ".pdf")), plot, width = 12, height = height,
+         device = grDevices::cairo_pdf)
+  ggsave(file.path(out_dir, paste0(stem, ".png")), plot, width = 12, height = height,
+         dpi = 300, bg = "white")
+}
+```
+
+## Figure 1: community responses to extirpation
+
+```{r figure-1, fig.height=8, fig.cap="Conditional community responses to predator extirpation. Four metrics and four scenario pairs follow the manuscript layout. Dots are model predictions; intervals are 95% paired-bootstrap intervals. Dashed lines show illustrative intact reference values. Stability uses a logarithmic axis."}
+extirpation_factors <- scenario_spec$factor[c(1, 3, 4, 5)]
+fig1_data <- subset(community_predictions,
+                    stage == "Post-extirpation" & factor %in% extirpation_factors)
+fig1_data$factor <- factor(fig1_data$factor, levels = extirpation_factors)
+fig1 <- wrap_plots(lapply(seq_along(community_pairs), function(i) {
+  metric <- names(community_pairs)[i]
+  plot_row(subset(fig1_data, metric == names(community_pairs)[i]), metric,
+           reference_values[[metric]], LETTERS[i], top = i == 1)
+}), ncol = 1) + plot_annotation(title = "Intact                                     Post-extirpation")
+save_figure(fig1, "figure_1_extirpation", 8)
+fig1
+```
+
+
+## Figure 2: predator responses to reintroduction
+
+```{r figure-2, fig.height=7, fig.cap="Predator establishment probability, biomass and temporal stability. Biomass and stability predictions are conditional on predator establishment. Intervals are pointwise 95% model confidence intervals, transformed from the link/log scale. The population reference values are probability 1, biomass 10 and inverse-CV stability 0.1."}
+population_predictions <- rbind(
+  transform(single_prediction("m1"), metric = "Establishment"),
+  transform(single_prediction("m3", 10), metric = "Biomass"),
+  transform(single_prediction("m2", .1), metric = "Stability"))
+write.csv(population_predictions, file.path(out_dir, "predator_predictions.csv"), row.names = FALSE)
+population_metrics <- c("Establishment", "Biomass", "Stability")
+population_reference <- c(Establishment = 1, Biomass = 10, Stability = .1)
+fig2 <- wrap_plots(lapply(seq_along(population_metrics), function(i) {
+  metric <- population_metrics[i]
+  plot_row(subset(population_predictions, metric == population_metrics[i]), metric,
+           population_reference[[metric]], LETTERS[i], top = i == 1,
+           probability = metric == "Establishment", population = TRUE)
+}), ncol = 1) + plot_annotation(title = "Intact                                     Post-reintroduction")
+save_figure(fig2, "figure_2_predator", 7)
+fig2
+```
+
+
+## Figure 3: community responses after reintroduction
+
+```{r figure-3, fig.height=9, fig.cap="Community responses on a common intact-reference scale. Transparent circles show post-extirpation predictions and opaque squares show post-reintroduction predictions. Reintroduction values combine both sequential model ratios. Intervals propagate their dependence using the paired bootstrap. "}
+fig3 <- wrap_plots(lapply(seq_along(community_pairs), function(i) {
+  metric <- names(community_pairs)[i]
+  plot_row(subset(community_predictions, metric == names(community_pairs)[i]), metric,
+           reference_values[[metric]], LETTERS[i], comparison = TRUE, top = i == 1)
+}), ncol = 1) + plot_annotation(title = "Intact                                     Post-extirpation / post-reintroduction")
+save_figure(fig3, "figure_3_reintroduction", 9)
+fig3
+```
+
 
 # Model diagnostics and detailed results
 

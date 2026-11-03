@@ -117,26 +117,17 @@ sims$stab_com_1 <- log(sims$stab_com_1)
 sims$stab_com_2 <- log(sims$stab_com_2)
 ```
 
-The baseline dataset comprised
-`r format(sum(is.na(raw$nb_link)), big.mark = ",")` community simulations
-following the intact–extirpated–reintroduced sequence described above. In
-these simulations, the predator retained its original prey preferences;
-feeding links became inactive if prey went extinct, but no links were
-experimentally added or removed.
+We generated `r format(sum(is.na(raw$nb_link)), big.mark = ",")`
+food-web simulations, each comprising intact, predator-extirpated and
+predator-reintroduced phases. We preserved the predator's original feeding
+links throughout; links to prey that became extinct were inactive.
 
-Of these simulations, `r format(nrow(sims), big.mark = ",")` provided usable
-reintroduced/intact predator biomass ratios and were retained for analysis.
-We excluded `r sum(is.na(raw$nb_link) & is.na(raw$delta_bmp_31))` simulations
-with missing or undefined ratios and
-`r sum(is.na(raw$nb_link) & is.infinite(raw$delta_bmp_31))` with infinite
-ratios (`r sum(is.na(raw$nb_link) & !is.finite(raw$delta_bmp_31))` exclusions
-in total).
-
-The full input file contains `r format(nrow(raw), big.mark = ",")`
-simulation records because it also includes
-`r format(sum(!is.na(raw$nb_link)), big.mark = ",")` simulations with
-experimentally altered predator feeding links. Those additional experiments
-are outside the scope of this analysis.
+We retained `r format(nrow(sims), big.mark = ",")` simulations for analysis
+after excluding `r sum(is.na(raw$nb_link) & !is.finite(raw$delta_bmp_31))`
+with unusable reintroduced/intact predator biomass ratios:
+`r sum(is.na(raw$nb_link) & is.na(raw$delta_bmp_31))` missing or undefined
+ratios and `r sum(is.na(raw$nb_link) & is.infinite(raw$delta_bmp_31))`
+infinite ratios.
 
 # Statistical models
 

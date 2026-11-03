@@ -1,0 +1,293 @@
+---
+title: Report
+author: John Doe
+date: March 22, 2005
+output:
+  bookdown::pdf_document2
+---
+
+```{r setup, include=FALSE}
+library(rmarkdown)
+library(officedown)
+knitr::opts_chunk$set(echo = FALSE,
+  collapse = TRUE,
+  comment = "#>",
+  fig.retina = 1.618, # Control using dpi
+  fig.width = 8,  # generated images
+  fig.pos = "H",  # pdf mode
+  #fig.align = "center",
+  dpi = if (knitr::is_latex_output()) 72 else 300,
+  out.width = "100%",
+  dev = "svg",
+  dev.args = list(png = list(type = "cairo-png")),
+  optipng = "-o1 -quiet")
+
+library(here)
+library(tidyverse)
+library(magrittr)
+library(cowplot)
+library(targets)
+library(kableExtra)
+```
+
+```{r}
+tar_load(param_CS)
+```
+
+# Methods
+
+## Food-web generation
+
+- Niche model
+- Number of replicates: 100
+
+## Experiments
+
+### Scenario
+
+- 3 scenario that follows each other (i.e. ordered):
+  1. The predator is present
+  2. We removed the top predator (species with the highest trophic level has its
+     biomass sets to 0)
+  3. We incorporate back the predator with an initial biomass equals to the
+     average biomass of the other species
+
+We simulated the dynamic of each food-web until that we reached a steady state
+(sum of biomass derivatives < 10^-6). We then simulated again the community at
+steady state for 300 timesteps and collected the last 200 timesteps to
+compute the community metrics.
+
+We then performed three experiments to see how the various context of the
+ecological communities affects the result of the reintroduction.
+
+### Complexity: connectance and richness
+
+- Initial connectance: `r unique(param_CS$C)`
+- Initial richness: `r unique(param_CS$S)`
+
+### Predator size
+
+
+### Predator generality
+
+### Predator propagule size
+
+## Data analysis
+
+- Richness, persistence
+- Average interaction strength, average per capita interaction strength
+- Stability:
+  - Community stability (1 / CV)
+  - Average population stability: 1 / weighted mean of population CV
+  - Mean population stability: 1 / mean of population CV
+
+
+For each of the metrics above, we computed the effect of (1) extirpation, (2)
+reintroduction after expirpation, and the effect of reintroduction relative to
+the original community (3). For each of the metrics, we then computed:
+
+1. Extirpation effect: extirpation - predator present
+2. Reintroduction effect: reintroduction - extirpation
+3. Resilience effect: reintroduction - predator present
+
+# Data investigation
+
+```{r}
+tar_load(sim_param)
+tar_load(sim)
+```
+
+## Tom preliminary inquiries
+
+```{r}
+# Foodwebs where the predator has a g of 0 in the intact community. IDS e.g. 510, 1081, 1218
+# Richness increases in extirpated. IDS e.g. 31753, 36639
+# Richness increases in reintroduced IDS e.g. 7432, 11260
+pred_no_links_sim_id <- c(510, 1081, 1218)
+rich_increase_extirpated_sim_ids <- c(31753, 36639)
+rich_increase_reintroduced_sim_ids <- c(7432, 11260)
+```
+
+```{r}
+top_pred_i <- sim %>%
+  group_by(sim_id) %>%
+  summarise(top_pred_i = unique(na.omit(c(i_extirpated, i_introduced))))
+stopifnot(length(unique(top_pred_i$sim_id)) == nrow(top_pred_i))
+```
+
+
+```{r}
+sim_pred_no_links <- sim %>%
+  filter(sim_id %in% pred_no_links_sim_id, scenario == "pred_present") %>%
+  mutate(fw = map(fw, ~matrix(.x, nrow = 10))) %>%
+  left_join(top_pred_i)
+sim_pred_no_links$fw[[1]][sim_pred_no_links$top_pred_i[1],]
+sim_pred_no_links$fw[[2]][sim_pred_no_links$top_pred_i[2],]
+sim_pred_no_links$fw[[3]][sim_pred_no_links$top_pred_i[3],]
+```
+
+```{r}
+sim_rich_inc_extirpated <- sim %>%
+  filter(sim_id %in% rich_increase_extirpated_sim_ids) %>%
+  select(sim_id, scenario, richness) %>%
+  pivot_wider(names_from = scenario, values_from = richness)
+```
+
+```{r}
+sim_rich_increase_reintroduced <- sim %>%
+  filter(sim_id %in% rich_increase_reintroduced_sim_ids) %>%
+  select(sim_id, scenario, richness) %>%
+  pivot_wider(names_from = scenario, values_from = richness)
+```
+
+## Systematic investigation
+
+```{r}
+failed_sim <- sim %>%
+  filter(is.na(scenario))
+```
+
+There were `r nrow(failed_sim)` simulations which failed to complete,
+i.e. `r round(nrow(failed_sim)/nrow(sim) * 100, 2)`%.
+
+
+```{r}
+sim_rich_scenar <- sim %>%
+  filter(!is.na(scenario)) %>%
+  select(sim_id, scenario, richness) %>%
+  pivot_wider(names_from = scenario, values_from = richness)
+imp_rich_scenar <- sim_rich_scenar %>%
+  filter(pred_extirpated > pred_present | pred_reintroduced > pred_present)
+```
+
+There are `r nrow(imp_rich_scenar)` simulations where richness increased after
+extirpation or reintroduction of the predator, which is basically impossible.
+
+Let's check correspondance between biomass and richness
+
+
+
+```{r}
+ti <- sim %>%
+  select(sim_id, richness, persistence, bm_sp, species_alive) %>%
+  mutate(
+    l_bm_sp = map_int(bm_sp, ~length(.x)),
+    l_alive_bm = map_int(bm_sp, ~length(.x[.x > 0]))
+  )
+check_bm_alive_match <- function(bm, alive) {
+  mask <- bm >= 0 & !seq_along(bm) %in% alive
+  out <- bm[mask]
+  ifelse(length(out) == 0, NA, out)
+}
+check_bm_sp <- ti %>%
+  mutate(
+    bm_dead = map2(
+      bm_sp, species_alive, check_bm_alive_match),
+    bm_dead1 = map_dbl(bm_dead, 1)
+  )
+na_check_bm_sp <- check_bm_sp %>%
+  filter(is.na(bm_dead))
+nrow(na_check_bm_sp)
+nrow(check_bm_sp)
+```
+
+```{r}
+colnames(sim)
+check_extirpation <- sim %>%
+  filter(scenario == "pred_extirpated") %>%
+  mutate(
+    check = map2_dbl(bm_sp, i_extirpated, ~.x[.y]),
+    check_init = map2_dbl(bm_init, i_extirpated, ~.x[.y]),
+    check_alive = map2_lgl(species_alive, i_extirpated, ~any(.x == .y))
+    )
+```
+
+```{r}
+# All good
+stopifnot(all(check_extirpation$check_init == 0))
+check_extirpation %>%
+  select(sim_id, check) %>%
+  filter(check == 0)
+check_extirpation %>%
+  filter(check_alive)
+```
+
+
+```{r}
+hist(check_bm_sp$bm_dead1)
+summary(check_bm_sp$bm_dead)
+```
+
+```{r}
+check_bm_sp %>%
+  filter(bm_dead1 > .67)
+sim %>%
+  filter(sim_id %in% check_bm_sp$sim_id)
+```
+
+
+```{r}
+colnames(sim)
+to <- sim %>%
+  filter(sim_id == 930) %>%
+  arrange(scenario)
+sim[sim$sim_id == 930, ]$bm_sp
+sim[sim$sim_id == 930, ]$i_introduced
+sim[sim$sim_id == 930, ]$richness
+sim[sim$sim_id == 930, ]$richness
+sim[sim$sim_id == 930, ]$bm_init
+sim[sim$sim_id == 930, ]$species_alive
+sim %>%
+  mutate(
+
+  )
+```
+
+
+
+# Result
+
+```{r}
+toby_res_cap <- "Mean population stability, community stability and weighted
+average population stability according to initial species richness
+and initial connectance. The colors are according to the timeline: predator
+present, extirpated or reintroduced" %>%
+  str_replace_all("\\s+", " ")
+```
+
+
+```{r toby, fig.cap = toby_res_cap}
+knitr::include_graphics(here("report", "figs", "p_toby_res.png"))
+```
+
+It is more blurry when we look at community stability and weighted average
+population stability.
+
+
+```{r}
+reintro_effect_cap <- "Effects of retrointroduction on community metrics.
+Computed as (reintroduction - extirpation) / extirpation." %>%
+  str_replace_all("\\s+", " ")
+
+extirp_effect_cap <- "Effects of extirpation on community metrics.
+Computed as (extirpation - predator present) / predator present." %>%
+  str_replace_all("\\s+", " ")
+
+resilience_effect_cap <- "Effects of resilience on community metrics.
+Computed as (reintroduction - predator present) / reintroduction." %>%
+  str_replace_all("\\s+", " ")
+```
+
+
+```{r reintro-eff, fig.cap = reintro_effect_cap}
+knitr::include_graphics(here("report", "figs", "p_reintro_effect.png"))
+```
+
+```{r extirp-eff, fig.cap = extirp_effect_cap}
+knitr::include_graphics(here("report", "figs", "p_extirpation_effect.png"))
+```
+
+```{r resilience-eff, fig.cap = resilience_effect_cap}
+knitr::include_graphics(here("report", "figs", "p_resilience_effect.png"))
+```
+

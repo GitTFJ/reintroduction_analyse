@@ -1,0 +1,193 @@
+println("Rundir is $(pwd())")
+
+import Pkg
+Pkg.instantiate()
+using Distributed, Serialization
+
+ncpu = length(Sys.cpu_info())
+
+first_sim = parse(Int, ARGS[1])
+last_sim = parse(Int, ARGS[2])
+
+println("Running parameters combination from $(ARGS[1]) to $(ARGS[2])")
+
+#Flag enables all the workers to start on the project of the current dir
+#dir = pwd() * "/"
+dir = expanduser("~/rewilding2023/")
+flag = "--project=" * dir
+#flag = "--project=."
+println("Workers run with flag: $(flag)")
+addprocs(10 - 1, exeflags=flag)
+#addprocs(5, exeflags=flag)
+println("Using $(ncpu -2) cores")
+
+@everywhere import Pkg
+@everywhere using StatsBase, DataFrames, Arrow, EcologicalNetworksDynamics
+@everywhere include("../src/foodweb_building.jl")
+
+@everywhere using StatsBase, DataFrames, Arrow, EcologicalNetworksDynamics
+@everywhere using DifferentialEquations, SparseArrays
+@everywhere using EcologicalNetworksDynamics
+@everywhere using Random, Plots, Distributions, DataFrames
+@everywhere using ProgressMeter
+@everywhere include("../src/misc.jl")
+@everywhere include("../src/simulation_methods.jl")
+@everywhere include("../src/foodweb_measure.jl")
+
+import Random.seed!
+
+seed!(22)
+###################
+#  CS experiment  #
+###################
+
+# Idea: same output for the three experiments
+# Big df result with a "step" key: "present", "extirpated", "reintroduced"
+
+# Load Foodweb
+fw_comb_df = DataFrame(Arrow.Table(joinpath(dir, "data/sim_param.arrow")))
+
+if last_sim > size(fw_comb_df, 1)
+    last_sim = size(fw_comb_df, 1)
+end
+println("Running param sim from lines $first_sim to $last_sim")
+
+# Reshape arrays and make a vector
+fw_comb_df[!, :fw] = map(x -> reshape_array(x), fw_comb_df[:, :fw])
+fw_comb = NamedTuple.(eachrow(fw_comb_df))
+#fw_comb = fw_comb[repeat([27], 50)]
+
+# How many timestep to keep:
+last_timestep = 500
+burn_in_timestep = 2000
+extinct_threshold = 1e-5
+ndigits_bm = 5
+gc_prob = .01
+
+
+sim = @showprogress pmap(x -> merge(
+                                    (sim_id = x.sim_id, fw = x.fw, Z = x.Z, nb_link = x.nb_link),
+                                    (
+                                     out = begin
+                                         fw = FoodWeb(x.fw, Z = x.Z)
+                                         p = ModelParameters(fw)
+                                         B0 = Base.rand(richness(fw))
+                                         m = sim_steady_state_last(p, B0,
+                                                                   last = last_timestep,
+                                                                   burn_in = burn_in_timestep,
+                                                                   extinction_threshold = extinct_threshold,
+                                                                   gc_thre = gc_prob
+                                                                  )
+                                         scenario_output(m, B0, fw;
+                                                         last = last_timestep,
+                                                         scenario = "pred_present",
+                                                         i_extirpated = missing,
+                                                         tlvl_extirpated = missing,
+                                                         i_introduced = missing,
+                                                         tlvl_introduced = missing,
+                                                         n_digits = ndigits_bm
+                                                        )
+                                     end,
+                                    ).out
+                                   ),
+                         fw_comb[first_sim:last_sim]; on_error = ex -> missing,
+                         batch_size = 100
+                        )
+println("Finished pred present")
+sim_df = DataFrame(skipmissing(sim))
+file = string("data/sim_pred_present", first_sim, "_", last_sim, ".arrow")
+Arrow.write(joinpath(dir, file), sim_df)
+
+# Add check for dead species: put their biomass to 0
+# Add check for negative bm: put their biomass to 0
+#
+# Without top predator
+sim_extinction = @showprogress pmap(x -> merge(
+                                               (sim_id = x.sim_id, fw = x.fw, Z = x.Z, nb_link = x.nb_link),
+                                               (out = begin
+                                      fw = FoodWeb(x.fw, Z = x.Z)
+                                      p = ModelParameters(fw)
+                                      # Max tlvl among alive species
+                                      max_tlvl_alive = findmax(x.tlvl[x.species_alive])
+                                      extirpated_tl = max_tlvl_alive[1]
+                                      # species index in the original community
+                                      extirpated_i = x.species_alive[max_tlvl_alive[2]]
+                                      init_bm = sanatize_biomass(x.bm_sp, x.species_alive)
+                                      init_bm[extirpated_i] = 0
+                                      m = sim_steady_state_last(p, init_bm,
+                                                                last = last_timestep,
+                                                                burn_in = burn_in_timestep,
+                                                                extinction_threshold = extinct_threshold,
+                                                                gc_thre = gc_prob
+                                                               )
+                                      scenario_output(m, init_bm, fw;
+                                                      last = last_timestep,
+                                                      scenario = "pred_extirpated",
+                                                      i_extirpated = extirpated_i,
+                                                      tlvl_extirpated = extirpated_tl,
+                                                      i_introduced = missing,
+                                                      tlvl_introduced = missing,
+                                                      n_digits = ndigits_bm
+                                                     )
+                                  end,
+                                 ).out
+                                ),
+                                    skipmissing(sim); on_error = ex -> missing,
+                                    batch_size = 100
+                                   )
+
+println("Finished pred extinction")
+sim_extinction_df = DataFrame(skipmissing(sim_extinction))
+file = string("data/sim_extinction", first_sim, "_", last_sim, ".arrow")
+Arrow.write(joinpath(dir, file), sim_extinction_df)
+
+# Re-introduction:
+sim_reintroduction = pmap(x -> merge(
+                                     (sim_id = x.sim_id, fw = x.fw, Z = x.Z, nb_link = x.nb_link),
+                                     (out = begin
+                                          fw = FoodWeb(x.fw, Z = x.Z)
+                                          # Remove or add link to the predator
+                                          if (!ismissing(x.nb_link))
+                                              f = add_remove_link_species(fw,
+                                                                          x.i_extirpated;
+                                                                          nb_link = x.nb_link)
+                                          else
+                                              f = fw.A
+                                          end
+                                          fw = FoodWeb(f, Z = x.Z)
+                                          p = ModelParameters(fw)
+                                          init_bm = sanatize_biomass(x.bm_sp, x.species_alive)
+                                          # Re-introduce the predator:
+                                          init_bm[x.i_extirpated] = mean(init_bm[init_bm .> 0])
+                                          m = sim_steady_state_last(p, init_bm,
+                                                                last = last_timestep,
+                                                                burn_in = burn_in_timestep,
+                                                                extinction_threshold = extinct_threshold,
+                                                                gc_thre = gc_prob
+                                                                )
+                                          scenario_output(m, init_bm, fw;
+                                                          last = last_timestep,
+                                                          scenario = "pred_reintroduced",
+                                                          i_extirpated = missing,
+                                                          tlvl_extirpated = missing,
+                                                          i_introduced = x.i_extirpated,
+                                                          tlvl_introduced = x.tlvl_extirpated,
+                                                          n_digits = ndigits_bm
+                                           )
+                                      end,
+                                     ).out
+                                    ),
+                          skipmissing(sim_extinction); on_error = ex -> missing,
+                          batch_size = 100
+                         )
+
+println("Finished pred reintroduction")
+sim_reintroduction_df = DataFrame(skipmissing(sim_reintroduction))
+file = string("data/sim_reintroduction", first_sim, "_", last_sim, ".arrow")
+Arrow.write(joinpath(dir, file), sim_reintroduction_df)
+
+sim_tot = [sim; sim_extinction; sim_reintroduction]
+sim_tot_df = DataFrame(skipmissing(sim_tot))
+
+file = string("data/sim_total", first_sim, "_", last_sim, ".arrow")
+Arrow.write(joinpath(dir, file), sim_tot_df)

@@ -1,0 +1,636 @@
+---
+title: "Predator reintroduction: annotated analysis v0.4"
+author: "Johnson, Danet, Hänfling and Beckerman"
+date: "2026-11-03"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    keep_tex: false
+    keep_md: true
+    toc: true
+    number_sections: true
+    fig_caption: true
+  html_document:
+    self_contained: true
+    toc: true
+    code_folding: show
+    theme: readable
+geometry: margin=0.7in
+fontsize: 10pt
+header-includes:
+  - \usepackage{float}
+params:
+  data_file: "sim.Rdata"
+  output_dir: "results_v0.4"
+  bootstrap_replicates: 200
+  seed: 20261103
+  reuse_bootstrap: true
+  bootstrap_workers: 4
+---
+
+```{r setup, include=FALSE}
+# All dependencies are explicit; no packages are installed during rendering.
+# The analysis needs no Julia rerun and no internet access once sim.Rdata exists.
+needed <- c("mgcv", "ggplot2", "patchwork", "knitr")
+missing_packages <- needed[!vapply(needed, requireNamespace, logical(1), quietly = TRUE)]
+if (length(missing_packages)) stop("Install required packages: ", paste(missing_packages, collapse = ", "))
+library(ggplot2)
+library(patchwork)
+knitr::opts_chunk$set(echo = FALSE, warning = TRUE, message = FALSE,
+                     fig.width = 11, fig.height = 7, out.width = "100%",
+                     fig.pos = "H", comment = "#>", dev = "png", dpi = 180)
+options(width = 75)
+RNGkind("Mersenne-Twister", "Inversion", "Rejection")
+set.seed(params$seed)
+out_dir <- params$output_dir
+dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+```
+
+# Scope and changes from v0.3
+
+This report extends `reintrov_0.3.Rmd` with two log-ratio evenness models,
+`m10` (extirpation/intact) and `m11` (reintroduction/extirpation). The first
+nine model formulas are retained. The new fits implement the evenness-model
+specification in the manuscript; they are newly reconstructed analyses, not
+recovered historical results.
+
+Three manuscript figures are rebuilt: community responses to extirpation
+(four rows), predator responses to reintroduction (three rows), and community
+responses to reintroduction (four rows). Colours, scenario order, intact
+reference panels, dashed reference lines, and circle/square comparisons follow
+the Google Docs figures. Values are calculated from the fitted models, not
+traced from the old images. Explicit scenario values follow their captions.
+
+Important corrections are documented rather than hidden:
+
+* Predator biomass and stability are conditional on establishment. Failed
+  predators within the inherited cohort remain in the binary establishment model. Zero biomass cannot be
+  logged; v0.3 attempted to do so for some failures.
+* "Short" and "Tall" now map to low and high trophic height respectively;
+  v0.3's prediction table reversed those labels.
+* Figure reference values (50 species, biomass 100, stability 0.1 and evenness
+  0.1) are illustrative, not measured ecosystem averages or physical units.
+  Inverse-CV stability 0.1 means CV = 10, not 10%.
+* For Figure 3, uncertainty in both sequential transitions is propagated with
+  paired resampling of simulation records. Multiplying two separate interval
+  endpoints, as in v0.3, does not give a calibrated interval for their product.
+* These confidence intervals describe conditional model predictions within
+  the simulated ensemble. They are not prediction intervals for real releases.
+
+# Input, phases and analysis population
+
+```{r input}
+# Load into a private environment to avoid accidental use of unrelated objects.
+input_environment <- new.env(parent = emptyenv())
+load(params$data_file, envir = input_environment)
+stopifnot(exists("sim_tom_ok", envir = input_environment, inherits = FALSE))
+raw <- as.data.frame(input_environment$sim_tom_ok)
+required_columns <- c("sim_id", "Z", "nb_link", "realised_C_1", "realised_S_1",
+  "g_1", "delta_g_31", "delta_s_21", "delta_s_32", "delta_sp_32",
+  "delta_bmp_31", "delta_stabp_31", "delta_bmc_21", "delta_bmc_32",
+  "delta_stabc_21", "delta_stabc_32", "delta_ev_21", "delta_ev_32",
+  "stab_com_1", "stab_com_2", "tlvl_mean_1")
+stopifnot(all(required_columns %in% names(raw)))
+
+# Preserve v0.3's two cohort filters exactly, and report both steps.
+finite_biomass_ratio <- raw[is.finite(raw$delta_bmp_31), , drop = FALSE]
+sims <- finite_biomass_ratio[is.na(finite_biomass_ratio$nb_link), , drop = FALSE]
+stopifnot(!anyDuplicated(sims$sim_id), nrow(sims) > 0)
+cohort <- data.frame(stage = c("Input", "Finite predator biomass ratio",
+  "Baseline: no imposed feeding-link change"),
+  simulations = c(nrow(raw), nrow(finite_biomass_ratio), nrow(sims)))
+knitr::kable(cohort)
+write.csv(cohort, file.path(out_dir, "cohort_counts.csv"), row.names = FALSE)
+
+# Z remains available in the input; z_1 is the historical analysis name.
+sims$z_1 <- sims$Z
+sims$delta_sp_32 <- as.numeric(sims$delta_sp_32)
+# These predictors are logged once, as in v0.3. Responses are logged in formulas.
+stopifnot(all(sims$stab_com_1 > 0), all(sims$stab_com_2 > 0))
+sims$stab_com_1 <- log(sims$stab_com_1)
+sims$stab_com_2 <- log(sims$stab_com_2)
+```
+
+Each row is one simulation trajectory across three phases: intact (1),
+extirpated (2) and reintroduced (3). Suffixes `21` and `32` denote ratios
+between consecutive phases; `31` compares reintroduced with intact. Evenness
+ratios can exceed one, so they are analysed with log-normal linear models,
+not beta regression. The data contain evenness measurements but not saved
+historical evenness-model fits. `DATA_DICTIONARY.csv` in the repository
+describes the input columns.
+
+For comparability, v0.4 retains v0.3's global finite-biomass-ratio filter.
+Before that filter there are `r sum(is.na(raw$nb_link))` baseline records;
+`r sum(is.na(raw$nb_link) & !is.finite(raw$delta_bmp_31))` are excluded by it.
+Consequently, the binary establishment model is conditional on the retained
+analysis cohort, not every attempted simulation. This selection and missing
+simulation outputs should be considered when interpreting establishment rates.
+
+\clearpage
+
+# Eleven statistical models
+
+```{r model-specification}
+# Keep formulas in one visible registry: this prevents plots and tables from
+# silently using different predictor sets. There are no hidden smooth terms
+# in the beta GAMs; gam() supplies the beta family and precision estimation.
+model_formulas <- list(
+  m1 = delta_sp_32 ~ realised_C_1 * realised_S_1 + g_1 * delta_g_31 + delta_s_21 + z_1,
+  m2 = log(delta_stabp_31) ~ realised_C_1 * realised_S_1 + g_1 * delta_g_31 + delta_s_21 + z_1,
+  m3 = log(delta_bmp_31) ~ realised_C_1 * realised_S_1 + g_1 * delta_g_31 + delta_s_21 + z_1,
+  m4 = delta_s_21 ~ realised_C_1 * realised_S_1 + g_1 + z_1 + stab_com_1 + tlvl_mean_1,
+  m5 = delta_s_32 ~ realised_C_1 * realised_S_1 + delta_s_21 + g_1 + z_1 + tlvl_mean_1 + delta_sp_32 + stab_com_2,
+  m6 = log(delta_bmc_21) ~ realised_C_1 * realised_S_1 + g_1 + z_1 + stab_com_1 + tlvl_mean_1,
+  m7 = log(delta_bmc_32) ~ realised_C_1 * realised_S_1 + delta_s_21 + g_1 + z_1 + tlvl_mean_1 + delta_sp_32 + stab_com_2,
+  m8 = log(delta_stabc_21) ~ realised_C_1 * realised_S_1 + g_1 + z_1 + stab_com_1 + tlvl_mean_1,
+  m9 = log(delta_stabc_32) ~ realised_C_1 * realised_S_1 + delta_s_21 + g_1 + z_1 + tlvl_mean_1 + delta_sp_32 + stab_com_2,
+  m10 = log(delta_ev_21) ~ realised_C_1 * realised_S_1 + g_1 + z_1 + stab_com_1 + tlvl_mean_1,
+  m11 = log(delta_ev_32) ~ realised_C_1 * realised_S_1 + delta_s_21 + g_1 + z_1 + tlvl_mean_1 + delta_sp_32 + stab_com_2
+)
+stopifnot(length(model_formulas) == 11L)
+families <- c("binomial logit", rep("Gaussian on log ratio", 2),
+  rep("beta logit", 2), rep("Gaussian on log ratio", 6))
+model_registry <- data.frame(model = names(model_formulas), family = families,
+  formula = vapply(model_formulas, function(f) paste(deparse(f), collapse = " "), character(1)))
+knitr::kable(model_registry[c("model", "family")])
+```
+
+```{r fit-models}
+# Complete and finite cases are selected separately for each model. Explicitly
+# evaluating the formula also catches log(0), which complete.cases alone misses.
+# For m2/m3, the estimand is the response among established predators.
+model_data <- function(id, data) {
+  if (id %in% c("m2", "m3")) data <- data[data$delta_sp_32 == 1, , drop = FALSE]
+  frame <- suppressWarnings(model.frame(model_formulas[[id]], data = data,
+                                       na.action = na.pass))
+  valid <- Reduce(`&`, lapply(frame, function(x) if (is.numeric(x)) is.finite(x) else !is.na(x)))
+  data[valid, , drop = FALSE]
+}
+fit_one <- function(id, data) {
+  data <- model_data(id, data)
+  if (id == "m1") {
+    glm(model_formulas[[id]], data = data, family = binomial(link = "logit"))
+  } else if (id %in% c("m4", "m5")) {
+    mgcv::gam(model_formulas[[id]], data = data, family = mgcv::betar(link = "logit"))
+  } else {
+    lm(model_formulas[[id]], data = data)
+  }
+}
+models <- setNames(lapply(names(model_formulas), fit_one, data = sims), names(model_formulas))
+# Expose the familiar names for users inspecting the knitted workspace.
+list2env(models, envir = environment())
+model_registry$n <- vapply(models, nobs, numeric(1))
+model_registry$excluded_from_baseline <- nrow(sims) - model_registry$n
+knitr::kable(model_registry[c("model", "family", "n", "excluded_from_baseline")])
+write.csv(model_registry, file.path(out_dir, "model_registry.csv"), row.names = FALSE)
+saveRDS(models, file.path(out_dir, "models_v0.4.rds"))
+
+# Export unstandardised coefficients with model-specific standard errors.
+coefficient_table <- do.call(rbind, lapply(names(models), function(id) {
+  fit <- models[[id]]
+  se <- sqrt(diag(vcov(fit)))
+  data.frame(model = id, term = names(coef(fit)), estimate = coef(fit), se = se,
+             lower = coef(fit) - qnorm(.975) * se,
+             upper = coef(fit) + qnorm(.975) * se, row.names = NULL)
+}))
+write.csv(coefficient_table, file.path(out_dir, "coefficients.csv"), row.names = FALSE)
+```
+
+`m1` predicts establishment; `m2` and `m3` predict predator stability and
+biomass conditional on establishment. Pairs `m4/m5`, `m6/m7`, `m8/m9` and
+`m10/m11` describe resident richness, total biomass, community stability and
+evenness respectively. These are associations within the simulated ensemble.
+In particular, conditioning on predator survival in community models does
+not estimate a randomised causal effect of survival.
+
+The richness beta regressions retain v0.3's `mgcv::betar` specification,
+including its default endpoint adjustment: exact zero/one proportions are
+moved just inside the unit interval (`eps = 100 * .Machine$double.eps`).
+There are `r sum(sims$delta_s_21 == 1)` exact-one extirpation ratios and
+`r sum(sims$delta_s_32 == 1)` exact-one reintroduction ratios. This substantial
+boundary mass is a limitation of the inherited beta models; a boundary-aware
+alternative would be a separate sensitivity analysis, not a silent change
+to the manuscript's established specification.
+
+\clearpage
+
+# Explicit manuscript scenarios
+
+```{r scenarios}
+# A one-factor-at-a-time reference profile reproduces the manuscript design.
+# Richness 50 is illustrative (and within the observed 2-59 range), whereas
+# all unspecified numeric predictors use their baseline-ensemble means.
+reference <- data.frame(realised_C_1 = mean(sims$realised_C_1), realised_S_1 = 50,
+  g_1 = mean(sims$g_1), z_1 = mean(sims$z_1), delta_g_31 = mean(sims$delta_g_31),
+  delta_s_21 = mean(sims$delta_s_21), delta_sp_32 = mean(sims$delta_sp_32),
+  stab_com_1 = mean(sims$stab_com_1), stab_com_2 = mean(sims$stab_com_2),
+  tlvl_mean_1 = mean(sims$tlvl_mean_1))
+scenario_spec <- data.frame(
+  factor = c("Community\nconnectance", "Community\nintactness", "Food-web\ntrophic height",
+             "Mass ratio\nPredator:Prey", "Predator\ndiet breadth", "Predator\nsurvival", "Prey\nintactness"),
+  variable = c("realised_C_1", "delta_s_21", "tlvl_mean_1", "z_1", "g_1", "delta_sp_32", "delta_g_31"),
+  left = c("Strong", "Intact", "Short", "Large", "Large", "High", "Intact"),
+  right = c("Weak", "Depleted", "Tall", "Small", "Small", "Low", "Depleted"),
+  left_value = c(.09, 1, 2.05, 1000, 12, 1, 1),
+  right_value = c(.06, .5, 3.43, 10, 1, 0, .5))
+scenarios <- do.call(rbind, lapply(seq_len(nrow(scenario_spec)), function(i) {
+  x <- reference[rep(1, 2), , drop = FALSE]
+  x[[scenario_spec$variable[i]]] <- c(scenario_spec$left_value[i], scenario_spec$right_value[i])
+  x$factor <- scenario_spec$factor[i]
+  x$setting <- c(scenario_spec$left[i], scenario_spec$right[i])
+  x$position <- 1:2
+  x
+}))
+scenarios$factor <- factor(scenarios$factor, levels = scenario_spec$factor)
+knitr::kable(scenario_spec[c("factor", "left", "left_value", "right", "right_value")],
+             col.names = c("Factor", "Left", "Value", "Right", "Value"))
+write.csv(scenarios, file.path(out_dir, "scenario_predictors.csv"), row.names = FALSE)
+write.csv(reference, file.path(out_dir, "reference_predictors.csv"), row.names = FALSE)
+
+# Predict on the link/log scale, where standard errors are defined. Back-
+# transforming gives probabilities or conditional geometric ratios (medians
+# under the log-normal model), not bias-corrected arithmetic mean ratios.
+predict_link <- function(fit, data) {
+  if (inherits(fit, "glm") || inherits(fit, "gam")) {
+    p <- predict(fit, newdata = data, type = "link", se.fit = TRUE)
+  } else p <- predict(fit, newdata = data, se.fit = TRUE)
+  cbind(estimate = as.numeric(p$fit), se = as.numeric(p$se.fit))
+}
+ratio_estimate <- function(fit, data) exp(predict_link(fit, data)[, "estimate"])
+single_prediction <- function(id, scale = 1) {
+  p <- predict_link(models[[id]], scenarios)
+  transform <- if (id %in% c("m1", "m4", "m5")) plogis else exp
+  data.frame(scenarios[c("factor", "setting", "position")],
+    estimate = scale * transform(p[, "estimate"]),
+    lower = scale * transform(p[, "estimate"] - qnorm(.975) * p[, "se"]),
+    upper = scale * transform(p[, "estimate"] + qnorm(.975) * p[, "se"]))
+}
+```
+
+These profiles hold unspecified predictors fixed; they do not represent
+observed whole communities. Reference log-stability is the mean of logged
+stability. Prey intactness, community intactness and survival can therefore
+be varied as conditional covariates without simulating a new community.
+Some settings are unusual combinations; predictions are not empirical
+recommendations about optimal release conditions.
+If a scenario variable is absent from a model, changing it leaves that
+model's prediction unchanged. For example, the predator-survival setting is
+not a predictor in the population models; its identical Figure 2 points
+are retained to follow the manuscript's seven-column layout.
+Each regression is evaluated separately. A prescribed intactness value in
+a second-transition model need not equal the first-transition richness
+prediction at the reference profile. Consequently, products of these
+predictions are illustrative model comparisons, not reconstructions of a
+single internally constrained food-web trajectory.
+
+\clearpage
+
+# Sequential community responses and uncertainty
+
+```{r sequential-bootstrap}
+# Figure 3 places both transitions on an intact-community reference scale.
+# Products of predicted ratios give the central values. The same resampled
+# trajectories refit both stage models, preserving their dependence.
+community_ids <- c("m4", "m5", "m6", "m7", "m8", "m9", "m10", "m11")
+stage_ratios <- function(fitted) {
+  sapply(community_ids, function(id) {
+    eta <- predict(fitted[[id]], newdata = scenarios,
+                   type = if (inherits(fitted[[id]], "gam")) "link" else "response")
+    if (id %in% c("m4", "m5")) plogis(eta) else exp(eta)
+  })
+}
+central_ratios <- stage_ratios(models)
+B <- as.integer(params$bootstrap_replicates)
+if (!is.finite(B) || B < 100L) stop("Use at least 100 paired bootstrap replicates.")
+boot <- array(NA_real_, dim = c(nrow(scenarios), length(community_ids), B),
+              dimnames = list(NULL, community_ids, NULL))
+bootstrap_errors <- bootstrap_warnings <- character(B)
+cache_file <- file.path(out_dir, "paired_bootstrap_predictions.rds")
+# A saved bootstrap is reusable only for identical input data, model registry,
+# reference/scenario settings, replicate count and seed. This avoids needless
+# refitting when rendering the same analysis as both PDF and HTML.
+cache_key <- list(data = unname(tools::md5sum(params$data_file)),
+  models = unname(tools::md5sum(file.path(out_dir, "model_registry.csv"))),
+  scenarios = unname(tools::md5sum(file.path(out_dir, "scenario_predictors.csv"))),
+  B = B, seed = params$seed,
+  software = c(R = as.character(getRversion()), mgcv = as.character(packageVersion("mgcv"))))
+cached <- if (isTRUE(params$reuse_bootstrap) && file.exists(cache_file)) readRDS(cache_file) else NULL
+use_cache <- !is.null(cached) && identical(attr(cached, "cache_key"), cache_key)
+if (use_cache) {
+  boot <- cached
+  bootstrap_errors <- attr(cached, "bootstrap_errors")
+  bootstrap_warnings <- attr(cached, "bootstrap_warnings")
+  message("Loaded bootstrap/checkpoint with an identical provenance key.")
+}
+# Checkpoints are saved after each batch of 20. Restarting a matching render
+# resumes incomplete replicates. Replicate-specific seeds make results
+# independent of worker count and execution order. Windows falls back to one
+# worker; on macOS/Linux mclapply uses separate forked R processes.
+workers <- max(1L, as.integer(params$bootstrap_workers))
+if (.Platform$OS.type == "windows") workers <- 1L
+bootstrap_one <- function(b) {
+  set.seed(params$seed + b)
+  sampled <- sims[sample.int(nrow(sims), replace = TRUE), , drop = FALSE]
+  warnings <- character()
+  error <- ""
+  attempt <- tryCatch(withCallingHandlers({
+    fitted <- setNames(lapply(community_ids, fit_one, data = sampled), community_ids)
+    if (any(!vapply(fitted[c("m4", "m5")], function(x) isTRUE(x$converged), logical(1)))) {
+      stop("Beta fit did not converge")
+    }
+    stage_ratios(fitted)
+  }, warning = function(w) {
+    warnings <<- c(warnings, conditionMessage(w))
+    invokeRestart("muffleWarning")
+  }), error = function(e) { error <<- conditionMessage(e); NULL })
+  list(predictions = attempt, error = error,
+       warnings = paste(unique(warnings), collapse = "; "))
+}
+complete <- vapply(seq_len(B), function(b) all(is.finite(boot[, , b])), logical(1))
+remaining <- which(!complete & bootstrap_errors == "")
+if (length(remaining)) for (batch in split(remaining, ceiling(seq_along(remaining) / 20))) {
+  batch_results <- parallel::mclapply(batch, bootstrap_one, mc.cores = workers,
+                                     mc.preschedule = FALSE, mc.set.seed = FALSE)
+  for (j in seq_along(batch)) {
+    b <- batch[j]
+    result <- batch_results[[j]]
+    if (!is.list(result)) stop("A bootstrap worker failed unexpectedly")
+    if (!is.null(result$predictions) && all(is.finite(result$predictions))) {
+      boot[, , b] <- result$predictions
+    } else if (result$error == "") result$error <- "Non-finite bootstrap predictions"
+    bootstrap_errors[b] <- result$error
+    bootstrap_warnings[b] <- result$warnings
+  }
+  attr(boot, "cache_key") <- cache_key
+  attr(boot, "bootstrap_errors") <- bootstrap_errors
+  attr(boot, "bootstrap_warnings") <- bootstrap_warnings
+  saveRDS(boot, cache_file)
+  writeLines(paste(max(batch), "of", B), file.path(out_dir, "bootstrap_progress.txt"))
+  message("Completed bootstrap through ", max(batch), " of ", B)
+}
+valid_boot <- vapply(seq_len(B), function(b) all(is.finite(boot[, , b])), logical(1))
+if (sum(valid_boot) < .9 * B) stop("Too many failed bootstrap fits; inspect bootstrap_errors.")
+write.csv(data.frame(replicate = seq_len(B), success = valid_boot,
+                     error = bootstrap_errors, warnings = bootstrap_warnings),
+          file.path(out_dir, "bootstrap_status.csv"), row.names = FALSE)
+attr(boot, "cache_key") <- cache_key
+attr(boot, "bootstrap_errors") <- bootstrap_errors
+attr(boot, "bootstrap_warnings") <- bootstrap_warnings
+saveRDS(boot, cache_file)
+boot <- boot[, , valid_boot, drop = FALSE]
+
+community_pairs <- list(Richness = c("m4", "m5"), Biomass = c("m6", "m7"),
+                        Stability = c("m8", "m9"), Evenness = c("m10", "m11"))
+reference_values <- c(Richness = 50, Biomass = 100, Stability = .1, Evenness = .1)
+community_predictions <- do.call(rbind, lapply(names(community_pairs), function(metric) {
+  ids <- community_pairs[[metric]]
+  ref <- reference_values[[metric]]
+  stage1 <- boot[, ids[1], ] * ref
+  stage2 <- boot[, ids[1], ] * boot[, ids[2], ] * ref
+  make_rows <- function(draws, estimate, stage) {
+    intervals <- t(apply(draws, 1, quantile, probs = c(.025, .975), na.rm = TRUE))
+    data.frame(scenarios[c("factor", "setting", "position")], metric = metric, stage = stage,
+      estimate = estimate, lower = intervals[, 1], upper = intervals[, 2])
+  }
+  rbind(make_rows(stage1, ref * central_ratios[, ids[1]], "Post-extirpation"),
+        make_rows(stage2, ref * central_ratios[, ids[1]] * central_ratios[, ids[2]], "Post-reintroduction"))
+}))
+write.csv(community_predictions, file.path(out_dir, "community_predictions.csv"), row.names = FALSE)
+```
+
+The paired bootstrap uses `r sum(valid_boot)` successful resamples out of
+`r B`, with seed `r params$seed`. It resamples whole simulation records, not
+time steps. It assumes the retained simulation records can be treated as
+independent sampling units. It does not include uncertainty in the chosen
+reference profile or in the underlying food-web parameterisation. More
+replicates can be requested through the `bootstrap_replicates` parameter.
+
+`r sum(nzchar(bootstrap_warnings))` resamples generated numerical warnings,
+recorded in `bootstrap_status.csv`. In particular, saturated-likelihood
+warnings from the inherited beta family must be considered alongside the
+large mass at persistence = 1; convergence alone does not establish that
+this distributional specification is appropriate.
+
+```{r bootstrap-warning-summary}
+warning_counts <- table(bootstrap_warnings[nzchar(bootstrap_warnings)])
+if (length(warning_counts)) knitr::kable(data.frame(
+  warning = names(warning_counts), replicates = as.integer(warning_counts)))
+```
+
+\clearpage
+
+# Rebuilt manuscript figures
+
+```{r figure-functions}
+# A shared plotting function makes row order, colours, symbols and labels
+# consistent across all three figures. Error bars are never clipped by hard
+# y-limits; scale differences are allowed where the new results require them.
+scenario_colours <- setNames(c("#1c355e", "#719891", "#c9b3ab", "#9e1420",
+                               "#ef7800", "#6fa5bc", "#ab746d"), scenario_spec$factor)
+plot_row <- function(data, metric, ref, letter, comparison = FALSE, top = FALSE,
+                     probability = FALSE, population = FALSE) {
+  data$factor <- droplevels(data$factor)
+  data$alpha <- if (comparison) ifelse(data$stage == "Post-extirpation", .35, 1) else 1
+  data$shape <- if (comparison) ifelse(data$stage == "Post-extirpation", 16, 15) else 16
+  data$x <- data$position + if (comparison) ifelse(data$stage == "Post-extirpation", -.07, .07) else 0
+  panel <- ggplot(data, aes(x = x, y = estimate, colour = factor)) +
+    geom_hline(yintercept = ref, linetype = "dashed", linewidth = .35, colour = "grey25") +
+    geom_linerange(aes(ymin = lower, ymax = upper, alpha = alpha), linewidth = .35) +
+    geom_point(aes(shape = shape, alpha = alpha), size = 2.4) +
+    scale_colour_manual(values = scenario_colours, guide = "none") +
+    scale_alpha_identity() + scale_shape_identity() +
+    facet_grid(. ~ factor) +
+    # Scenario-specific labels share numeric positions, so use a separate
+    # text layer instead of forcing identical x labels in every facet.
+    scale_x_continuous(breaks = c(1, 2), labels = c("", ""), limits = c(.55, 2.45)) +
+    labs(x = NULL, y = NULL) +
+    theme_classic(base_size = 10) +
+    theme(strip.background = element_blank(),
+          strip.text = if (top) element_text(size = 8) else element_blank(),
+          axis.line.y = element_blank(), axis.ticks.y = element_blank(),
+          axis.text.y = element_blank(), axis.ticks.x = element_blank(),
+          axis.text.x = element_blank(), panel.spacing.x = grid::unit(.14, "in"),
+          plot.margin = margin(2, 4, 15, 2))
+  labels <- unique(data[c("factor", "setting", "position")])
+  labels$label_y <- if (metric == "Stability")
+    10^floor(min(log10(c(data$lower, data$upper, ref))) - .05) else -Inf
+  panel <- panel + geom_text(data = labels,
+    aes(x = position, y = label_y, label = setting), inherit.aes = FALSE,
+    vjust = 1.5, size = 2.8) + coord_cartesian(clip = "off")
+  baseline <- ggplot(data.frame(x = 1, y = ref), aes(x, y)) +
+    geom_hline(yintercept = ref, linetype = "dashed", linewidth = .35, colour = "grey25") +
+    geom_point(size = 2.4, colour = "grey30") +
+    scale_x_continuous(breaks = 1,
+      labels = if (population) "Average\npredator" else "Average\ncommunity",
+      limits = c(.55, 1.45)) +
+    labs(x = NULL, y = metric, tag = letter) +
+    theme_classic(base_size = 10) + theme(plot.tag = element_text(face = "bold"),
+      plot.margin = margin(2, 4, 15, 4), axis.text.x = element_text(size = 8))
+  yrange <- range(c(data$lower, data$upper, ref), finite = TRUE)
+  if (metric == "Stability") {
+    # Positive log-scale limits include all data and the illustrative baseline.
+    logrange <- c(floor(min(log10(yrange)) - .05), ceiling(max(log10(yrange)) + .05))
+    log_breaks <- 10^seq(logrange[1], logrange[2])
+    log_labels <- function(x) parse(text = paste0("10^", round(log10(x))))
+    panel <- panel + scale_y_log10(limits = 10^logrange, breaks = log_breaks,
+      labels = log_labels, expand = expansion(mult = 0))
+    baseline <- baseline + scale_y_log10(limits = 10^logrange, breaks = log_breaks,
+      labels = log_labels, expand = expansion(mult = 0))
+  } else {
+    pad <- max(diff(yrange) * .15, abs(ref) * .04)
+    limits <- yrange + c(-pad, pad)
+    if (probability) limits <- c(max(0, limits[1]), min(1.01, limits[2]))
+    panel <- panel + scale_y_continuous(limits = limits)
+    baseline <- baseline + scale_y_continuous(limits = limits)
+  }
+  baseline + panel + plot_layout(widths = c(1.1, 2 * nlevels(data$factor)))
+}
+save_figure <- function(plot, stem, height) {
+  ggsave(file.path(out_dir, paste0(stem, ".pdf")), plot, width = 12, height = height,
+         device = grDevices::cairo_pdf)
+  ggsave(file.path(out_dir, paste0(stem, ".png")), plot, width = 12, height = height,
+         dpi = 300, bg = "white")
+}
+```
+
+## Figure 1: community responses to extirpation
+
+```{r figure-1, fig.height=8, fig.cap="Conditional community responses to predator extirpation. Four metrics and four scenario pairs follow the manuscript layout. Dots are model predictions; intervals are 95% paired-bootstrap intervals. Dashed lines show illustrative intact reference values. Stability uses a logarithmic axis."}
+extirpation_factors <- scenario_spec$factor[c(1, 3, 4, 5)]
+fig1_data <- subset(community_predictions,
+                    stage == "Post-extirpation" & factor %in% extirpation_factors)
+fig1_data$factor <- factor(fig1_data$factor, levels = extirpation_factors)
+fig1 <- wrap_plots(lapply(seq_along(community_pairs), function(i) {
+  metric <- names(community_pairs)[i]
+  plot_row(subset(fig1_data, metric == names(community_pairs)[i]), metric,
+           reference_values[[metric]], LETTERS[i], top = i == 1)
+}), ncol = 1) + plot_annotation(title = "Intact                                     Post-extirpation")
+save_figure(fig1, "figure_1_extirpation", 8)
+fig1
+```
+
+\clearpage
+
+## Figure 2: predator responses to reintroduction
+
+```{r figure-2, fig.height=7, fig.cap="Predator establishment probability, biomass and temporal stability. Biomass and stability predictions are conditional on predator establishment. Intervals are pointwise 95% model confidence intervals, transformed from the link/log scale. The population reference values are probability 1, biomass 10 and inverse-CV stability 0.1."}
+population_predictions <- rbind(
+  transform(single_prediction("m1"), metric = "Establishment"),
+  transform(single_prediction("m3", 10), metric = "Biomass"),
+  transform(single_prediction("m2", .1), metric = "Stability"))
+write.csv(population_predictions, file.path(out_dir, "predator_predictions.csv"), row.names = FALSE)
+population_metrics <- c("Establishment", "Biomass", "Stability")
+population_reference <- c(Establishment = 1, Biomass = 10, Stability = .1)
+fig2 <- wrap_plots(lapply(seq_along(population_metrics), function(i) {
+  metric <- population_metrics[i]
+  plot_row(subset(population_predictions, metric == population_metrics[i]), metric,
+           population_reference[[metric]], LETTERS[i], top = i == 1,
+           probability = metric == "Establishment", population = TRUE)
+}), ncol = 1) + plot_annotation(title = "Intact                                     Post-reintroduction")
+save_figure(fig2, "figure_2_predator", 7)
+fig2
+```
+
+\clearpage
+
+## Figure 3: community responses after reintroduction
+
+```{r figure-3, fig.height=9, fig.cap="Community responses on a common intact-reference scale. Transparent circles show post-extirpation predictions and opaque squares show post-reintroduction predictions. Reintroduction values combine both sequential model ratios. Intervals propagate their dependence using the paired bootstrap. Evenness is newly reconstructed in v0.4."}
+fig3 <- wrap_plots(lapply(seq_along(community_pairs), function(i) {
+  metric <- names(community_pairs)[i]
+  plot_row(subset(community_predictions, metric == names(community_pairs)[i]), metric,
+           reference_values[[metric]], LETTERS[i], comparison = TRUE, top = i == 1)
+}), ncol = 1) + plot_annotation(title = "Intact                                     Post-extirpation / post-reintroduction")
+save_figure(fig3, "figure_3_reintroduction", 9)
+fig3
+```
+
+\clearpage
+
+# Model diagnostics and detailed results
+
+```{r diagnostics}
+# Diagnostics are descriptive checks, not a claim that the log-normal or beta
+# distributions are true. Examine residual shape, heteroscedasticity and high
+# leverage before using these results in a final manuscript.
+diagnostics <- do.call(rbind, lapply(names(models), function(id) {
+  fit <- models[[id]]
+  r <- residuals(fit, type = "pearson")
+  data.frame(model = id, n = nobs(fit), AIC = AIC(fit),
+    residual_sd = sd(r), maximum_absolute_residual = max(abs(r)),
+    converged = if (inherits(fit, "gam") || inherits(fit, "glm")) isTRUE(fit$converged) else TRUE)
+}))
+knitr::kable(diagnostics, digits = 4,
+             col.names = c("Model", "n", "AIC", "Residual SD", "Max residual", "Converged"))
+stopifnot(all(diagnostics$converged), all(is.finite(coefficient_table$estimate)),
+          all(is.finite(coefficient_table$se)),
+          all(community_predictions$lower <= community_predictions$upper),
+          all(population_predictions$lower <= population_predictions$upper))
+write.csv(diagnostics, file.path(out_dir, "model_diagnostics.csv"), row.names = FALSE)
+```
+
+```{r residual-plots, fig.height=8}
+diagnostic_points <- do.call(rbind, lapply(names(models), function(id) {
+  data.frame(model = id, fitted = fitted(models[[id]]),
+             residual = residuals(models[[id]], type = "pearson"))
+}))
+ggplot(diagnostic_points, aes(fitted, residual)) +
+  geom_point(alpha = .08, size = .3) + geom_hline(yintercept = 0, colour = "red") +
+  facet_wrap(~ factor(model, levels = names(models)), scales = "free", ncol = 3) +
+  theme_bw(base_size = 9) + labs(x = "Fitted value", y = "Pearson residual")
+```
+
+```{r detailed-model-summaries, results='asis'}
+# Complete summaries retain coefficients, residual summaries and family details.
+# Printing one model per subsection makes every fitted model auditable.
+for (id in names(models)) {
+  cat("\n\n## ", id, "\n\n", sep = "")
+  cat("Formula:\n\n```\n",
+      paste(strwrap(model_registry$formula[model_registry$model == id], width = 72),
+            collapse = "\n"), "\n```\n\n")
+  cat("```\n", paste(capture.output(summary(models[[id]])), collapse = "\n"), "\n```\n")
+}
+```
+
+# Comparison with v0.3 and the manuscript images
+
+The v0.3 formulas for `m1` to `m9` are preserved; the populations for predator
+continuous responses are now explicitly restricted as described above.
+The figure settings are deliberately explicit rather than recomputing caption
+values from quantiles that may change with filtering. In particular, trophic
+height labels are corrected and the high/low survival settings are 1 and 0.
+All other predictors remain fixed at the exported reference profile.
+
+The new evenness fits and the uncertainty correction can change points and
+intervals. The Google Docs images should be replaced only after comparing
+these outputs and revisiting any numerical statements that depend on them.
+In particular, correcting Short/Tall changes the interpretation of the
+trophic-height panels, and conditioning predator biomass on establishment
+can change relationships with prey persistence. Reconstructed outputs should
+not be described as exact numerical reproductions of the historical images.
+This report does not silently replace the manuscript figures or rewrite its
+results. Re-establishing the source revision that generated the historical
+simulation data remains a separate provenance question.
+
+# Reproducibility
+
+Run from the repository root, with `sim.Rdata` beside this file:
+
+```{r render-instructions, eval=FALSE, echo=TRUE}
+rmarkdown::render("reintrov_0.4.Rmd", output_format = "pdf_document")
+# HTML provides a searchable report; keep_md writes the executed Markdown too.
+rmarkdown::render("reintrov_0.4.Rmd", output_format = "html_document",
+                  output_options = list(keep_md = TRUE))
+```
+
+PDF rendering needs Pandoc and a LaTeX installation (for example TinyTeX).
+HTML rendering needs Pandoc but not LaTeX. The source shows all fitting and
+plotting code. The results directory contains the eleven fitted models,
+model sample sizes, coefficients, scenarios, predictions, diagnostics,
+bootstrap status, and standalone figure PDFs/PNGs. Packages and versions are
+reported below. No package installation or external data download is performed.
+
+```{r session-info}
+capture.output(sessionInfo(), file = file.path(out_dir, "sessionInfo.txt"))
+sessionInfo()
+```

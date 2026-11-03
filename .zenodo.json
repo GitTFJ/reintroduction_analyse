@@ -1,7 +1,7 @@
 {
   "title": "Reintroductions can backfire by destabilising food webs and triggering further extinction cascades: analysis code and simulation data",
   "upload_type": "software",
-  "description": "Analysis code, analysis-ready simulation data, additional simulation outputs, and a pinned snapshot of the Julia simulation source for the predator reintroduction study. The R input contains 69,895 records; the published analysis script filters these to 10,969 baseline simulations. See DATA_README.md for contents, filtering, and reproducibility limitations.",
+  "description": "Annotated v0.4 reanalysis of predator reintroduction simulation data. Includes eleven fitted model specifications (nine inherited formulas and two newly reconstructed evenness models), executed PDF and Markdown results, rebuilt manuscript figure layouts, model-specific sample sizes, coefficient and prediction tables, and reproducibility documentation. The underlying simulation data are unchanged. No new Julia food-web simulations were generated. See CHANGELOG_v0.4.md and DATA_README.md for corrections and limitations.",
   "creators": [
     {
       "name": "Johnson, Thomas F.",

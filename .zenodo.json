@@ -1,7 +1,7 @@
 {
   "title": "Reintroductions can backfire by destabilising food webs and triggering further extinction cascades: analysis code and simulation data",
   "upload_type": "software",
-  "description": "Analysis v0.4 for the predator reintroduction study. This release contains the annotated R Markdown analysis, a self-contained HTML report with all eleven marginal-effect plots and the approved summary figures, analysis-ready simulation data, a data dictionary, and paired-bootstrap predictions. The preserved-feeding-link experiment comprised 11,614 community simulations across intact, extirpated and reintroduced phases; 10,969 simulations with usable predator biomass ratios were retained for analysis. See the README and HTML report for instructions, methods, results and limitations.",
+  "description": "Code and data for the predator reintroduction study. This release brings together the Julia code for the bioenergetic food-web simulations and the R v0.4 statistical analysis, analysis-ready data, data dictionary, saved paired-bootstrap predictions and complete HTML results. The HTML report contains all eleven marginal-effect plots and the three manuscript summary figures. See the repository README for the R analysis and julia/ for the simulation code and links to the original simulation data.",
   "creators": [
     {
       "name": "Johnson, Thomas F.",

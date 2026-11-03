@@ -3,25 +3,16 @@ title: "Predator reintroduction: annotated analysis v0.4"
 author: "Johnson, Danet, Hänfling and Beckerman"
 date: "2026-11-03"
 output:
-  pdf_document:
-    latex_engine: xelatex
-    keep_tex: false
-    keep_md: true
-    toc: true
-    number_sections: true
-    fig_caption: true
   html_document:
     self_contained: true
     toc: true
+    toc_float: true
+    number_sections: true
     code_folding: show
     theme: readable
-geometry: margin=0.7in
-fontsize: 10pt
-header-includes:
-  - \usepackage{float}
 params:
-  data_file: "sim.Rdata"
-  output_dir: "results_v0.4"
+  data_file: "data/sim.Rdata"
+  output_dir: "results"
   bootstrap_replicates: 200
   seed: 20261103
   reuse_bootstrap: true
@@ -46,36 +37,55 @@ out_dir <- params$output_dir
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 ```
 
-# Scope and changes from v0.3
+# How to run this analysis
 
-This report extends `reintrov_0.3.Rmd` with two log-ratio evenness models,
-`m10` (extirpation/intact) and `m11` (reintroduction/extirpation). The first
-nine model formulas are retained. The new fits implement the evenness-model
-specification in the manuscript; they are newly reconstructed analyses, not
-recovered historical results.
+This document fits eleven models of predator establishment, predator biomass
+and stability, and community richness, biomass, stability and evenness across
+predator extirpation and reintroduction. It presents the complete executed
+results, figures, model summaries and diagnostics for analysis v0.4.
 
-Three manuscript figures are rebuilt: community responses to extirpation
-(four rows), predator responses to reintroduction (three rows), and community
-responses to reintroduction (four rows). Colours, scenario order, intact
-reference panels, dashed reference lines, and circle/square comparisons follow
-the Google Docs figures. Values are calculated from the fitted models, not
-traced from the old images. Explicit scenario values follow their captions.
+Download the repository using **Code → Download ZIP**, extract it, and open
+`reintrov_0.4.Rmd` in RStudio. Keep the `data` and `results` folders beside it.
+Install the packages once:
 
-Important corrections are documented rather than hidden:
+```{r install-instructions, eval=FALSE, echo=TRUE}
+install.packages(c("rmarkdown", "knitr", "mgcv", "ggplot2", "patchwork"))
+```
 
-* Predator biomass and stability are conditional on establishment. Failed
-  predators within the inherited cohort remain in the binary establishment model. Zero biomass cannot be
-  logged; v0.3 attempted to do so for some failures.
-* "Short" and "Tall" now map to low and high trophic height respectively;
-  v0.3's prediction table reversed those labels.
-* Figure reference values (50 species, biomass 100, stability 0.1 and evenness
-  0.1) are illustrative, not measured ecosystem averages or physical units.
-  Inverse-CV stability 0.1 means CV = 10, not 10%.
-* For Figure 3, uncertainty in both sequential transitions is propagated with
-  paired resampling of simulation records. Multiplying two separate interval
-  endpoints, as in v0.3, does not give a calibrated interval for their product.
-* These confidence intervals describe conditional model predictions within
-  the simulated ensemble. They are not prediction intervals for real releases.
+Then click **Knit → Knit to HTML**, or run this from the repository folder:
+
+```{r run-instructions, eval=FALSE, echo=TRUE}
+rmarkdown::render("reintrov_0.4.Rmd")
+```
+
+RStudio supplies Pandoc. No LaTeX installation is needed. The self-contained
+`reintrov_0.4.html` opens in a browser without an internet connection and
+includes every figure. The annotated Rmd contains all fitting and plotting code.
+
+The script reads `data/sim.Rdata` and writes tables, fitted models and figure
+files to `results/`. The supplied bootstrap checkpoint is reused only when
+its input, model, scenario, seed and software checks match. Otherwise the
+script runs 200 paired bootstrap replicates, which can take tens of minutes.
+Interrupted matching runs resume from saved checkpoints. To force a new run:
+
+```{r recompute-instructions, eval=FALSE, echo=TRUE}
+rmarkdown::render("reintrov_0.4.Rmd",
+                  params = list(reuse_bootstrap = FALSE))
+```
+
+# Analysis overview
+
+The three figures describe community responses to extirpation (four metrics),
+predator responses to reintroduction (three metrics), and community responses
+to reintroduction (four metrics). Predator biomass and stability are modelled
+conditional on establishment. Short/tall trophic-height settings are 2.05/3.43;
+high/low predator-survival settings are 1/0.
+
+Reference values (50 resident species, community biomass 100, predator biomass
+10, stability 0.1 and evenness 0.1) illustrate changes on a common scale; they
+are not measured ecosystem averages or physical units. Inverse-CV stability
+0.1 means CV = 10. Confidence intervals describe conditional predictions
+within this simulation ensemble, rather than predictions for real releases.
 
 # Input, phases and analysis population
 
@@ -92,7 +102,7 @@ required_columns <- c("sim_id", "Z", "nb_link", "realised_C_1", "realised_S_1",
   "stab_com_1", "stab_com_2", "tlvl_mean_1")
 stopifnot(all(required_columns %in% names(raw)))
 
-# Preserve v0.3's two cohort filters exactly, and report both steps.
+# Apply the two analysis-cohort filters and report both steps.
 finite_biomass_ratio <- raw[is.finite(raw$delta_bmp_31), , drop = FALSE]
 sims <- finite_biomass_ratio[is.na(finite_biomass_ratio$nb_link), , drop = FALSE]
 stopifnot(!anyDuplicated(sims$sim_id), nrow(sims) > 0)
@@ -102,10 +112,10 @@ cohort <- data.frame(stage = c("Input", "Finite predator biomass ratio",
 knitr::kable(cohort)
 write.csv(cohort, file.path(out_dir, "cohort_counts.csv"), row.names = FALSE)
 
-# Z remains available in the input; z_1 is the historical analysis name.
+# Z remains available in the input; z_1 is the analysis name.
 sims$z_1 <- sims$Z
 sims$delta_sp_32 <- as.numeric(sims$delta_sp_32)
-# These predictors are logged once, as in v0.3. Responses are logged in formulas.
+# These predictors are logged once, before model fitting. Responses are logged in formulas.
 stopifnot(all(sims$stab_com_1 > 0), all(sims$stab_com_2 > 0))
 sims$stab_com_1 <- log(sims$stab_com_1)
 sims$stab_com_2 <- log(sims$stab_com_2)
@@ -115,18 +125,15 @@ Each row is one simulation trajectory across three phases: intact (1),
 extirpated (2) and reintroduced (3). Suffixes `21` and `32` denote ratios
 between consecutive phases; `31` compares reintroduced with intact. Evenness
 ratios can exceed one, so they are analysed with log-normal linear models,
-not beta regression. The data contain evenness measurements but not saved
-historical evenness-model fits. `DATA_DICTIONARY.csv` in the repository
-describes the input columns.
+not beta regression. `data/DATA_DICTIONARY.csv` describes the input columns.
 
-For comparability, v0.4 retains v0.3's global finite-biomass-ratio filter.
+The analysis applies a global finite-predator-biomass-ratio filter.
 Before that filter there are `r sum(is.na(raw$nb_link))` baseline records;
 `r sum(is.na(raw$nb_link) & !is.finite(raw$delta_bmp_31))` are excluded by it.
 Consequently, the binary establishment model is conditional on the retained
 analysis cohort, not every attempted simulation. This selection and missing
 simulation outputs should be considered when interpreting establishment rates.
 
-\clearpage
 
 # Eleven statistical models
 
@@ -152,7 +159,7 @@ families <- c("binomial logit", rep("Gaussian on log ratio", 2),
   rep("beta logit", 2), rep("Gaussian on log ratio", 6))
 model_registry <- data.frame(model = names(model_formulas), family = families,
   formula = vapply(model_formulas, function(f) paste(deparse(f), collapse = " "), character(1)))
-knitr::kable(model_registry[c("model", "family")])
+knitr::kable(model_registry[c("model", "family")], row.names = FALSE)
 ```
 
 ```{r fit-models}
@@ -178,10 +185,10 @@ fit_one <- function(id, data) {
 }
 models <- setNames(lapply(names(model_formulas), fit_one, data = sims), names(model_formulas))
 # Expose the familiar names for users inspecting the knitted workspace.
-list2env(models, envir = environment())
+invisible(list2env(models, envir = environment()))
 model_registry$n <- vapply(models, nobs, numeric(1))
 model_registry$excluded_from_baseline <- nrow(sims) - model_registry$n
-knitr::kable(model_registry[c("model", "family", "n", "excluded_from_baseline")])
+knitr::kable(model_registry[c("model", "family", "n", "excluded_from_baseline")], row.names = FALSE)
 write.csv(model_registry, file.path(out_dir, "model_registry.csv"), row.names = FALSE)
 saveRDS(models, file.path(out_dir, "models_v0.4.rds"))
 
@@ -203,16 +210,14 @@ evenness respectively. These are associations within the simulated ensemble.
 In particular, conditioning on predator survival in community models does
 not estimate a randomised causal effect of survival.
 
-The richness beta regressions retain v0.3's `mgcv::betar` specification,
+The richness regressions use `mgcv::betar`,
 including its default endpoint adjustment: exact zero/one proportions are
 moved just inside the unit interval (`eps = 100 * .Machine$double.eps`).
 There are `r sum(sims$delta_s_21 == 1)` exact-one extirpation ratios and
 `r sum(sims$delta_s_32 == 1)` exact-one reintroduction ratios. This substantial
-boundary mass is a limitation of the inherited beta models; a boundary-aware
-alternative would be a separate sensitivity analysis, not a silent change
-to the manuscript's established specification.
+boundary mass is a limitation of the beta models; a boundary-aware
+alternative would be a separate sensitivity analysis.
 
-\clearpage
 
 # Explicit manuscript scenarios
 
@@ -242,7 +247,9 @@ scenarios <- do.call(rbind, lapply(seq_len(nrow(scenario_spec)), function(i) {
   x
 }))
 scenarios$factor <- factor(scenarios$factor, levels = scenario_spec$factor)
-knitr::kable(scenario_spec[c("factor", "left", "left_value", "right", "right_value")],
+scenario_table <- scenario_spec[c("factor", "left", "left_value", "right", "right_value")]
+scenario_table$factor <- gsub("\n", " ", scenario_table$factor)
+knitr::kable(scenario_table,
              col.names = c("Factor", "Left", "Value", "Right", "Value"))
 write.csv(scenarios, file.path(out_dir, "scenario_predictors.csv"), row.names = FALSE)
 write.csv(reference, file.path(out_dir, "reference_predictors.csv"), row.names = FALSE)
@@ -283,7 +290,6 @@ prediction at the reference profile. Consequently, products of these
 predictions are illustrative model comparisons, not reconstructions of a
 single internally constrained food-web trajectory.
 
-\clearpage
 
 # Sequential community responses and uncertainty
 
@@ -308,7 +314,7 @@ bootstrap_errors <- bootstrap_warnings <- character(B)
 cache_file <- file.path(out_dir, "paired_bootstrap_predictions.rds")
 # A saved bootstrap is reusable only for identical input data, model registry,
 # reference/scenario settings, replicate count and seed. This avoids needless
-# refitting when rendering the same analysis as both PDF and HTML.
+# refitting when rendering the same analysis in HTML.
 cache_key <- list(data = unname(tools::md5sum(params$data_file)),
   models = unname(tools::md5sum(file.path(out_dir, "model_registry.csv"))),
   scenarios = unname(tools::md5sum(file.path(out_dir, "scenario_predictors.csv"))),
@@ -417,9 +423,8 @@ if (length(warning_counts)) knitr::kable(data.frame(
   warning = names(warning_counts), replicates = as.integer(warning_counts)))
 ```
 
-\clearpage
 
-# Rebuilt manuscript figures
+# Results figures
 
 ```{r figure-functions}
 # A shared plotting function makes row order, colours, symbols and labels
@@ -509,7 +514,6 @@ save_figure(fig1, "figure_1_extirpation", 8)
 fig1
 ```
 
-\clearpage
 
 ## Figure 2: predator responses to reintroduction
 
@@ -531,11 +535,10 @@ save_figure(fig2, "figure_2_predator", 7)
 fig2
 ```
 
-\clearpage
 
 ## Figure 3: community responses after reintroduction
 
-```{r figure-3, fig.height=9, fig.cap="Community responses on a common intact-reference scale. Transparent circles show post-extirpation predictions and opaque squares show post-reintroduction predictions. Reintroduction values combine both sequential model ratios. Intervals propagate their dependence using the paired bootstrap. Evenness is newly reconstructed in v0.4."}
+```{r figure-3, fig.height=9, fig.cap="Community responses on a common intact-reference scale. Transparent circles show post-extirpation predictions and opaque squares show post-reintroduction predictions. Reintroduction values combine both sequential model ratios. Intervals propagate their dependence using the paired bootstrap. "}
 fig3 <- wrap_plots(lapply(seq_along(community_pairs), function(i) {
   metric <- names(community_pairs)[i]
   plot_row(subset(community_predictions, metric == names(community_pairs)[i]), metric,
@@ -545,7 +548,6 @@ save_figure(fig3, "figure_3_reintroduction", 9)
 fig3
 ```
 
-\clearpage
 
 # Model diagnostics and detailed results
 
@@ -592,43 +594,23 @@ for (id in names(models)) {
 }
 ```
 
-# Comparison with v0.3 and the manuscript images
+# Reproducibility and interpretation
 
-The v0.3 formulas for `m1` to `m9` are preserved; the populations for predator
-continuous responses are now explicitly restricted as described above.
-The figure settings are deliberately explicit rather than recomputing caption
-values from quantiles that may change with filtering. In particular, trophic
-height labels are corrected and the high/low survival settings are 1 and 0.
-All other predictors remain fixed at the exported reference profile.
+All eleven models are fitted from the supplied input. The simulation data are
+unchanged; this script performs statistical analysis rather than rerunning the
+Julia simulations. The precise source revision that generated every historical
+simulation output has not been established.
 
-The new evenness fits and the uncertainty correction can change points and
-intervals. The Google Docs images should be replaced only after comparing
-these outputs and revisiting any numerical statements that depend on them.
-In particular, correcting Short/Tall changes the interpretation of the
-trophic-height panels, and conditioning predator biomass on establishment
-can change relationships with prey persistence. Reconstructed outputs should
-not be described as exact numerical reproductions of the historical images.
-This report does not silently replace the manuscript figures or rewrite its
-results. Re-establishing the source revision that generated the historical
-simulation data remains a separate provenance question.
+Predictions vary one scenario at a time while other predictors stay at the
+reference profile displayed above. They describe conditional associations;
+prey-species persistence is distinct from prey biomass or production. These
+models do not establish a causal benefit of prey loss. Exponentiated log-model
+predictions are geometric ratios, rather than arithmetic means.
 
-# Reproducibility
-
-Run from the repository root, with `sim.Rdata` beside this file:
-
-```{r render-instructions, eval=FALSE, echo=TRUE}
-rmarkdown::render("reintrov_0.4.Rmd", output_format = "pdf_document")
-# HTML provides a searchable report; keep_md writes the executed Markdown too.
-rmarkdown::render("reintrov_0.4.Rmd", output_format = "html_document",
-                  output_options = list(keep_md = TRUE))
-```
-
-PDF rendering needs Pandoc and a LaTeX installation (for example TinyTeX).
-HTML rendering needs Pandoc but not LaTeX. The source shows all fitting and
-plotting code. The results directory contains the eleven fitted models,
-model sample sizes, coefficients, scenarios, predictions, diagnostics,
-bootstrap status, and standalone figure PDFs/PNGs. Packages and versions are
-reported below. No package installation or external data download is performed.
+The results folder contains model sample sizes, coefficients, predictor
+profiles, predictions, diagnostics, bootstrap status, fitted models and
+standalone figure files. Model warnings and boundary-proportion limitations
+are reported explicitly. Package versions for this execution follow.
 
 ```{r session-info}
 capture.output(sessionInfo(), file = file.path(out_dir, "sessionInfo.txt"))

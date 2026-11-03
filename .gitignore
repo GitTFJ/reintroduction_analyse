@@ -1,0 +1,5 @@
+/.Rhistory
+/.RData
+/reintrov_0.4_files/
+/results/*
+!/results/paired_bootstrap_predictions.rds

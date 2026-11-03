@@ -1,0 +1,33 @@
+column,description
+sim_id,Simulation identifier
+Z,Predator-prey body-mass ratio parameter
+nb_link,Imposed predator link-number setting; NA denotes the baseline unchanged-link scenario
+rep,Replicate identifier
+realised_C_1,"Realised food-web connectance, phase 1"
+realised_C_2,"Realised food-web connectance, phase 2"
+realised_C_3,"Realised food-web connectance, phase 3"
+realised_S_1,"Realised species richness, phase 1"
+realised_S_2,"Realised species richness, phase 2"
+realised_S_3,"Realised species richness, phase 3"
+g_1,"Predator resource count, phase 1"
+g_3,"Predator resource count, phase 3"
+stab_com_1,"Community temporal biomass stability (inverse coefficient of variation), phase 1"
+stab_com_2,"Community temporal biomass stability (inverse coefficient of variation), phase 2"
+tlvl_mean_1,"Mean food-web trophic level, phase 1"
+tlvl_mean_2,"Mean food-web trophic level, phase 2"
+evenness_1,"Community biomass evenness, phase 1"
+evenness_2,"Community biomass evenness, phase 2"
+evenness_3,"Community biomass evenness, phase 3"
+delta_ev_21,Ratio of community evenness: phase 2 / phase 1
+delta_ev_31,Ratio of community evenness: phase 3 / phase 1
+delta_ev_32,Ratio of community evenness: phase 3 / phase 2
+delta_s_21,Ratio of resident-species richness: phase 2 / phase 1
+delta_s_32,Ratio of resident-species richness: phase 3 / phase 2
+delta_bmc_21,Ratio of total community biomass: phase 2 / phase 1
+delta_bmc_32,Ratio of total community biomass: phase 3 / phase 2
+delta_stabc_21,Ratio of community temporal biomass stability: phase 2 / phase 1
+delta_stabc_32,Ratio of community temporal biomass stability: phase 3 / phase 2
+delta_g_31,Predator resource count in phase 3 relative to phase 1
+delta_sp_32,Logical indicator of predator persistence following reintroduction
+delta_bmp_31,Predator biomass in phase 3 relative to phase 1
+delta_stabp_31,Predator temporal biomass stability in phase 3 relative to phase 1

@@ -1,0 +1,38 @@
+{
+  "title": "Reintroductions can backfire by destabilising food webs and triggering further extinction cascades: analysis code and simulation data",
+  "upload_type": "software",
+  "description": "Analysis code, analysis-ready simulation data, additional simulation outputs, and a pinned snapshot of the Julia simulation source for the predator reintroduction study. The R input contains 69,895 records; the published analysis script filters these to 10,969 baseline simulations. See DATA_README.md for contents, filtering, and reproducibility limitations.",
+  "creators": [
+    {
+      "name": "Johnson, Thomas F.",
+      "affiliation": "University of Sheffield"
+    },
+    {
+      "name": "Danet, Alain",
+      "affiliation": "DECOD, INRAE, Institut Agro Rennes-Angers, IFREMER"
+    },
+    {
+      "name": "Hänfling, Toby",
+      "affiliation": "University of Sheffield"
+    },
+    {
+      "name": "Beckerman, Andrew P.",
+      "affiliation": "University of Sheffield"
+    }
+  ],
+  "license": "MIT",
+  "keywords": [
+    "ecology",
+    "reintroduction",
+    "food webs",
+    "biodiversity",
+    "simulation"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "10.1101/2025.08.28.672799",
+      "relation": "isSupplementTo",
+      "scheme": "doi"
+    }
+  ]
+}

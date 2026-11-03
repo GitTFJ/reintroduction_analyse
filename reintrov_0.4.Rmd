@@ -1,5 +1,5 @@
 ---
-title: "Predator reintroduction: annotated analysis v0.4"
+title: "Predator extirpation and reintroduction: analysis and results"
 author: "Johnson, Danet, Hänfling and Beckerman"
 date: "2026-11-03"
 output:
@@ -39,7 +39,7 @@ out_dir <- params$output_dir
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 ```
 
-# How to run this analysis
+# Reproducing the analysis
 
 1. Download the repository using **Code → Download ZIP** and extract it.
 2. Open `reintrov_0.4.Rmd` in RStudio. Keep `data/` and `results/` beside it.
@@ -56,26 +56,28 @@ install.packages(c("rmarkdown", "knitr", "mgcv", "ggplot2", "patchwork",
 rmarkdown::render("reintrov_0.4.Rmd")
 ```
 
-Open `reintrov_0.4.html` to read the figures, marginal-effect plots, model
-summaries and diagnostics. Generated outputs are saved in `results/`.
-The script reuses the supplied bootstrap checkpoint when its provenance
-checks match; a full run computes 200 resamples and can take tens of minutes.
+The analysis generates `reintrov_0.4.html` and saves model outputs in
+`results/`. A validated bootstrap checkpoint is included to reduce computation
+time; a full run uses 200 resamples.
 
-# Analysis overview
+# Study design
 
-The three figures describe community responses to extirpation (four metrics),
-predator responses to reintroduction (three metrics), and community responses
-to reintroduction (four metrics). Predator biomass and stability are modelled
-conditional on establishment. Short/tall trophic-height settings are 2.05/3.43;
-high/low predator-survival settings are 1/0.
+We examined predator establishment and community responses to predator
+extirpation and subsequent reintroduction using bioenergetic food-web
+simulations. Each simulation comprised three sequential phases: an intact
+community (phase 1), predator extirpation (phase 2) and predator reintroduction
+(phase 3). Community responses comprised resident species richness, total
+biomass, temporal biomass stability and biomass evenness. Predator responses
+comprised establishment, biomass and temporal biomass stability.
 
-Reference values (50 resident species, community biomass 100, predator biomass
-10, stability 0.1 and evenness 0.1) illustrate changes on a common scale; they
-are not measured ecosystem averages or physical units. Inverse-CV stability
-0.1 means CV = 10. Confidence intervals describe conditional predictions
-within this simulation ensemble, rather than predictions for real releases.
+Responses were expressed relative to the preceding phase, except predator
+biomass and stability, which were compared with their intact values. Subscripts
+21, 32 and 31 identify extirpated/intact, reintroduced/extirpated and
+reintroduced/intact ratios, respectively. Temporal stability is the inverse
+coefficient of variation of biomass. Variable definitions accompany the data
+in `data/DATA_DICTIONARY.csv`.
 
-# Input, phases and analysis population
+# Simulation selection
 
 ```{r input}
 # Load into a private environment to avoid accidental use of unrelated objects.
@@ -109,27 +111,37 @@ sims$stab_com_1 <- log(sims$stab_com_1)
 sims$stab_com_2 <- log(sims$stab_com_2)
 ```
 
-The table shows how we selected the simulations used in the analysis. The
-input contained `r nrow(raw)` simulation records. We excluded
-`r nrow(raw) - nrow(finite_biomass_ratio)` records with missing or infinite
-ratios of reintroduced to intact predator biomass, leaving
-`r nrow(finite_biomass_ratio)` records. We then retained the
-`r nrow(sims)` baseline simulations in which we imposed no change in the
-predator's feeding links, excluding the scenarios that added or removed links.
+The dataset contained `r format(nrow(raw), big.mark = ",")` simulation
+records. Excluding `r format(nrow(raw) - nrow(finite_biomass_ratio), big.mark = ",")`
+records with non-finite reintroduced/intact predator biomass ratios left
+`r format(nrow(finite_biomass_ratio), big.mark = ",")` records. Of these,
+`r format(nrow(sims), big.mark = ",")` represented baseline simulations with
+no imposed addition or removal of predator feeding links and formed the
+analysis dataset. These counts describe successive selection steps, as
+summarised in the table.
 
-There were `r sum(is.na(raw$nb_link))` baseline records before the biomass-ratio
-filter, of which `r sum(is.na(raw$nb_link) & !is.finite(raw$delta_bmp_31))`
-were excluded. Our establishment estimates therefore describe the retained
-simulations rather than all attempted reintroductions, a limitation of the
-analysis.
+The biomass-ratio filter excluded
+`r format(sum(is.na(raw$nb_link) & !is.finite(raw$delta_bmp_31)), big.mark = ",")`
+of the `r format(sum(is.na(raw$nb_link)), big.mark = ",")` baseline records.
+Establishment probabilities are therefore conditional on retention in the
+analysis dataset, which limits their interpretation across all attempted
+reintroductions.
 
-Each simulation record tracks an intact community (phase 1), predator
-extirpation (phase 2) and predator reintroduction (phase 3). Ratios labelled
-`21` compare extirpated with intact communities, `32` compare reintroduced
-with extirpated communities, and `31` compare reintroduced with intact
-communities. Variable definitions are provided in `data/DATA_DICTIONARY.csv`.
+# Statistical models
 
-# Eleven statistical models
+We fitted eleven regression models: three describing predator responses and
+four pairs describing community responses to extirpation and reintroduction.
+Predator establishment was modelled with binomial regression. Predator biomass
+and stability, and community biomass, stability and evenness ratios, were
+log-transformed and fitted with Gaussian linear models. Resident-richness
+ratios were fitted with beta regression and a logit link. Predator biomass and
+stability models included established predators with finite log responses.
+
+All models included intact-community richness, connectance, their interaction,
+predator diet breadth and the predator–prey mass-ratio parameter. Additional
+predictors represented prey persistence, community intactness, trophic height,
+community stability and predator establishment, as specified in the model
+formulas below.
 
 ```{r model-specification}
 # Keep formulas in one visible registry: this prevents plots and tables from
@@ -153,10 +165,10 @@ families <- c("binomial logit", rep("Gaussian on log ratio", 2),
   rep("beta logit", 2), rep("Gaussian on log ratio", 6))
 model_registry <- data.frame(model = names(model_formulas), family = families,
   formula = vapply(model_formulas, function(f) paste(deparse(f), collapse = " "), character(1)))
-knitr::kable(model_registry[c("model", "family")], row.names = FALSE)
+
 ```
 
-```{r fit-models}
+```{r fit-models, warning=FALSE}
 # Complete and finite cases are selected separately for each model. Explicitly
 # evaluating the formula also catches log(0), which complete.cases alone misses.
 # For m2/m3, the estimand is the response among established predators.
@@ -197,20 +209,14 @@ coefficient_table <- do.call(rbind, lapply(names(models), function(id) {
 write.csv(coefficient_table, file.path(out_dir, "coefficients.csv"), row.names = FALSE)
 ```
 
-`m1` predicts establishment; `m2` and `m3` predict predator stability and
-biomass conditional on establishment. Pairs `m4/m5`, `m6/m7`, `m8/m9` and
-`m10/m11` describe resident richness, total biomass, community stability and
-evenness respectively. These are associations within the simulated ensemble.
-In particular, conditioning on predator survival in community models does
-not estimate a randomised causal effect of survival.
+Models m1–m3 describe predator establishment, stability and biomass,
+respectively. Models m4/m5 describe resident richness, m6/m7 community biomass,
+m8/m9 community stability and m10/m11 community evenness; the first model in
+each pair describes extirpation and the second reintroduction. Sample sizes
+and exclusions are reported above; coefficients and diagnostics are reported
+at the end of the analysis.
 
-We modelled richness ratios using beta regression, with proportions of zero
-or one adjusted just inside the unit interval. Richness was unchanged in
-`r sum(sims$delta_s_21 == 1)` extirpation transitions and
-`r sum(sims$delta_s_32 == 1)` reintroduction transitions. This concentration
-of observations at one is a limitation of the beta models.
-
-# Explicit manuscript scenarios
+# Prediction scenarios
 
 ```{r scenarios}
 # A one-factor-at-a-time reference profile reproduces the manuscript design.
@@ -265,24 +271,19 @@ single_prediction <- function(id, scale = 1) {
 }
 ```
 
-These profiles hold unspecified predictors fixed; they do not represent
-observed whole communities. Reference log-stability is the mean of logged
-stability. Prey intactness, community intactness and survival can therefore
-be varied as conditional covariates without simulating a new community.
-Some settings are unusual combinations; predictions are not empirical
-recommendations about optimal release conditions.
-If a scenario variable is absent from a model, changing it leaves that
-model's prediction unchanged. For example, the predator-survival setting is
-not a predictor in the population models; its identical Figure 2 points
-are retained to follow the manuscript's seven-column layout.
-Each regression is evaluated separately. A prescribed intactness value in
-a second-transition model need not equal the first-transition richness
-prediction at the reference profile. Consequently, products of these
-predictions are illustrative model comparisons, not reconstructions of a
-single internally constrained food-web trajectory.
+We evaluated conditional predictions at the paired predictor values shown
+above, holding remaining covariates at their analysis-dataset means and
+intact-community richness at 50 resident species. Community-stability
+covariates were held at the mean of their log-transformed values. Predictors
+absent from a model had no effect on its predictions; predator-survival and
+trophic-height contrasts are consequently identical in the predator models.
 
+For the summary figures, predicted ratios were scaled to reference values of
+50 resident species, community biomass 100, predator biomass 10, stability 0.1
+and evenness 0.1. These values provide a common illustrative baseline.
+Exponentiated predictions from log-response models represent geometric ratios.
 
-# Sequential community responses and uncertainty
+# Uncertainty estimation
 
 ```{r sequential-bootstrap}
 # Figure 3 places both transitions on an intact-community reference scale.
@@ -395,21 +396,20 @@ community_predictions <- do.call(rbind, lapply(names(community_pairs), function(
 write.csv(community_predictions, file.path(out_dir, "community_predictions.csv"), row.names = FALSE)
 ```
 
-We estimated 95% confidence intervals from `r B` paired bootstrap resamples
-of simulation trajectories. We refitted both transition models in each
-resample to retain the dependence between their predictions. All
-`r sum(valid_boot)` resamples completed successfully. Saturated-likelihood
-warnings during beta-model fitting are a numerical limitation of these
-uncertainty estimates.
+We estimated 95% confidence intervals for community responses using
+`r B` paired bootstrap resamples of simulation trajectories. Both transition
+models were refitted to each resample, preserving dependence when combining
+extirpation and reintroduction ratios. All `r sum(valid_boot)` resamples
+completed. Predator-response intervals were calculated from model-based
+standard errors on the log or logit scale and back-transformed for display.
 
 # Marginal-effect plots
 
-These panels show the fitted response across each predictor and the modelled
-interactions, with pointwise 95% confidence intervals. Unspecified predictors
-are held at their model-data means. Continuous response models display log
-ratios; establishment and richness models display probabilities or proportions.
-Prediction grids show the ranges specified in the plotting code and can extend
-beyond the observed data. Interpret extrapolated portions accordingly.
+Conditional response curves show associations with individual predictors
+and their interactions, holding other covariates at their model-data means.
+Shaded bands indicate pointwise 95% confidence intervals. Gaussian models are
+shown on the log-ratio scale, with zero indicating no change; establishment
+and richness models are shown on the probability or proportion scale.
 
 ```{r marginal-plot-style, include=FALSE}
 # Shared colours for the richness and predator-diet interaction curves.
@@ -1176,7 +1176,7 @@ ggarrange(
 
 ```
 
-# Results figures
+# Summary of predator and community responses
 
 ```{r figure-functions}
 # A shared plotting function makes row order, colours, symbols and labels
@@ -1252,7 +1252,13 @@ save_figure <- function(plot, stem, height) {
 
 ## Figure 1: community responses to extirpation
 
-```{r figure-1, fig.height=8, fig.cap="Conditional community responses to predator extirpation. Four metrics and four scenario pairs follow the manuscript layout. Dots are model predictions; intervals are 95% paired-bootstrap intervals. Dashed lines show illustrative intact reference values. Stability uses a logarithmic axis."}
+Predator extirpation reduced predicted resident richness across the four
+scenario contrasts. Community biomass generally increased, although the
+weak-connectance scenario fell below its intact reference. Stability responses
+varied markedly among scenarios. Evenness declined in most contrasts, while
+both connectance scenarios remained at or above the intact reference.
+
+```{r figure-1, fig.height=8, fig.cap="Community responses to predator extirpation. Points show conditional predictions for resident richness, community biomass, temporal stability and evenness; bars indicate 95% paired-bootstrap confidence intervals. Dashed lines mark intact reference values. Stability is plotted on a logarithmic scale."}
 extirpation_factors <- scenario_spec$factor[c(1, 3, 4, 5)]
 fig1_data <- subset(community_predictions,
                     stage == "Post-extirpation" & factor %in% extirpation_factors)
@@ -1269,7 +1275,15 @@ fig1
 
 ## Figure 2: predator responses to reintroduction
 
-```{r figure-2, fig.height=7, fig.cap="Predator establishment probability, biomass and temporal stability. Biomass and stability predictions are conditional on predator establishment. Intervals are pointwise 95% model confidence intervals, transformed from the link/log scale. The population reference values are probability 1, biomass 10 and inverse-CV stability 0.1."}
+Predator establishment probabilities were generally high, but fell below
+0.9 in the depleted-community and narrow-diet scenarios. Established predators
+usually had lower biomass than their intact reference, whereas temporal
+stability generally increased. At the reference covariate values, predator
+biomass was lower with complete recorded prey persistence than with half of
+prey links retained. Prey-species persistence therefore did not imply recovery
+of predator biomass.
+
+```{r figure-2, fig.height=7, fig.cap="Predator responses to reintroduction. Points show establishment probability and, among established predators, biomass and temporal stability relative to intact conditions. Bars indicate pointwise 95% model-based confidence intervals. Dashed lines mark intact reference values."}
 population_predictions <- rbind(
   transform(single_prediction("m1"), metric = "Establishment"),
   transform(single_prediction("m3", 10), metric = "Biomass"),
@@ -1290,7 +1304,13 @@ fig2
 
 ## Figure 3: community responses after reintroduction
 
-```{r figure-3, fig.height=9, fig.cap="Community responses on a common intact-reference scale. Transparent circles show post-extirpation predictions and opaque squares show post-reintroduction predictions. Reintroduction values combine both sequential model ratios. Intervals propagate their dependence using the paired bootstrap. "}
+Reintroduction produced further predicted losses of resident richness
+across the scenario contrasts. Biomass and stability generally declined from
+post-extirpation levels, with smaller changes under weak connectance and low
+community intactness. Evenness increased towards or beyond its intact
+reference, with the largest overshoot in the depleted-community scenario.
+
+```{r figure-3, fig.height=9, fig.cap="Community responses to extirpation and reintroduction. Circles show post-extirpation predictions and squares show combined predictions after reintroduction, expressed on the same intact-reference scale. Bars indicate 95% paired-bootstrap confidence intervals. Dashed lines mark intact reference values."}
 fig3 <- wrap_plots(lapply(seq_along(community_pairs), function(i) {
   metric <- names(community_pairs)[i]
   plot_row(subset(community_predictions, metric == names(community_pairs)[i]), metric,
@@ -1346,23 +1366,35 @@ for (id in names(models)) {
 }
 ```
 
-# Reproducibility and interpretation
+# Limitations
 
-All eleven models are fitted from the supplied input. The simulation data are
-unchanged; this script performs statistical analysis rather than rerunning the
-Julia simulations. The precise source revision that generated every historical
-simulation output has not been established.
+Establishment estimates apply to the simulations retained after the
+biomass-ratio filter. The richness responses also contain substantial endpoint
+mass: richness was unchanged in `r format(sum(sims$delta_s_21 == 1), big.mark = ",")`
+extirpation transitions and `r format(sum(sims$delta_s_32 == 1), big.mark = ",")`
+reintroduction transitions. Beta regression accommodates these values through
+an endpoint adjustment; their concentration at one is a distributional
+limitation. Saturated-likelihood warnings during model fitting and bootstrap
+refitting add numerical uncertainty to the beta-model estimates.
 
-Predictions vary one scenario at a time while other predictors stay at the
-reference profile displayed above. They describe conditional associations;
-prey-species persistence is distinct from prey biomass or production. These
-models do not establish a causal benefit of prey loss. Exponentiated log-model
-predictions are geometric ratios, rather than arithmetic means.
+Scenario contrasts describe conditional associations within the simulated
+ensemble. Some predictor combinations and parts of the marginal-effect grids
+extend beyond observed combinations. Combined transition predictions are
+evaluated at specified covariate values rather than constrained to follow a
+single realised community trajectory. Their intervals quantify sampling
+uncertainty within the ensemble, conditional on the reference profile and
+model specification.
 
-The results folder contains model sample sizes, coefficients, predictor
-profiles, predictions, diagnostics, bootstrap status, fitted models and
-standalone figure files. Model warnings and boundary-proportion limitations
-are reported explicitly. Package versions for this execution follow.
+Prey-link persistence measures resource-species retention, not prey biomass or
+production. Its association with predator biomass does not identify the
+mechanism underlying this relationship. The precise historical simulation
+source revision associated with every input record remains unresolved.
+
+# Computational environment
+
+The following package versions document the execution used to generate this
+report. Model objects, coefficients, predictions and standalone figures are
+written to `results/`.
 
 ```{r session-info}
 capture.output(sessionInfo(), file = file.path(out_dir, "sessionInfo.txt"))

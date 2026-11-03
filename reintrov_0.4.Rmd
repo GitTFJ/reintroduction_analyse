@@ -1190,8 +1190,8 @@ summary_figure <- function(d, metrics, refs, comparison=FALSE, columns=NULL) {
 heads <- c('Intact','Community\nconnectance','Community\nintactness',
            'Trophic\nheight','Predator:prey\nmass ratio','Predator\ndiet breadth','Predator\nsurvival','Prey\nintactness')
 cols <- c('#414141','#243f69','#547f78','#9a8078','#a6192e','#bd6500','#367d98','#925c61')
-metrics <- c('Richness','Biomass','Stability','Evenness')
-refs <- c(Richness=50,Biomass=100,Stability=.1,Evenness=.1)
+# Use the responses and reference values supplied by each figure.
+stopifnot(all(metrics %in% unique(d$metric)), all(metrics %in% names(refs)))
 # A single facet grid per response supplies shared axes, avoiding the separate
 # baseline plot and large tag/margin bands in the previous layout.
 d$column <- factor(match(d$factor,factors)+1,levels=1:8,labels=heads)

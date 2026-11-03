@@ -1609,14 +1609,19 @@ included to reduce computation time; a full run uses 200 resamples.</p>
 </div>
 <div id="study-design" class="section level1" number="2">
 <h1><span class="header-section-number">2</span> Study design</h1>
-<p>We examined predator establishment and community responses to
-predator extirpation and subsequent reintroduction using bioenergetic
-food-web simulations. Each simulation comprised three sequential phases:
-an intact community (phase 1), predator extirpation (phase 2) and
-predator reintroduction (phase 3). Community responses comprised
-resident species richness, total biomass, temporal biomass stability and
-biomass evenness. Predator responses comprised establishment, biomass
-and temporal biomass stability.</p>
+<p>We used bioenergetic food-web simulations to examine predator
+establishment and community responses to predator extirpation and
+reintroduction. Communities were simulated through three phases. First,
+we simulated the intact food web to establish its reference dynamics. We
+then removed the surviving species with the highest trophic level and
+simulated the community after extirpation. Finally, we reintroduced that
+predator at the mean biomass of surviving resident species and simulated
+the community after its return. Each phase comprised 2,000 model time
+units of burn-in followed by a 500-unit measurement window.</p>
+<p>Community responses comprised resident species richness, total
+biomass, temporal biomass stability and biomass evenness. Predator
+responses comprised establishment, biomass and temporal biomass
+stability.</p>
 <p>Responses were expressed relative to the preceding phase, except
 predator biomass and stability, which were compared with their intact
 values. Subscripts 21, 32 and 31 identify extirpated/intact,
@@ -1625,41 +1630,21 @@ Temporal stability is the inverse coefficient of variation of biomass.
 Variable definitions accompany the data in
 <code>data/DATA_DICTIONARY.csv</code>.</p>
 </div>
-<div id="simulation-selection" class="section level1" number="3">
-<h1><span class="header-section-number">3</span> Simulation
-selection</h1>
-<table>
-<thead>
-<tr class="header">
-<th align="left">stage</th>
-<th align="right">simulations</th>
-</tr>
-</thead>
-<tbody>
-<tr class="odd">
-<td align="left">Input</td>
-<td align="right">69895</td>
-</tr>
-<tr class="even">
-<td align="left">Finite predator biomass ratio</td>
-<td align="right">66959</td>
-</tr>
-<tr class="odd">
-<td align="left">Baseline: no imposed feeding-link change</td>
-<td align="right">10969</td>
-</tr>
-</tbody>
-</table>
-<p>The dataset contained 69,895 simulation records. Excluding 2,936
-records with non-finite reintroduced/intact predator biomass ratios left
-66,959 records. Of these, 10,969 represented baseline simulations with
-no imposed addition or removal of predator feeding links and formed the
-analysis dataset. These counts describe successive selection steps, as
-summarised in the table.</p>
-<p>The biomass-ratio filter excluded 645 of the 11,614 baseline records.
-Establishment probabilities are therefore conditional on retention in
-the analysis dataset, which limits their interpretation across all
-attempted reintroductions.</p>
+<div id="simulation-dataset" class="section level1" number="3">
+<h1><span class="header-section-number">3</span> Simulation dataset</h1>
+<p>The baseline dataset comprised 11,614 community simulations following
+the intact–extirpated–reintroduced sequence described above. In these
+simulations, the predator retained its original prey preferences;
+feeding links became inactive if prey went extinct, but no links were
+experimentally added or removed.</p>
+<p>Of these simulations, 10,969 provided usable reintroduced/intact
+predator biomass ratios and were retained for analysis. We excluded 643
+simulations with missing or undefined ratios and 2 with infinite ratios
+(645 exclusions in total).</p>
+<p>The full input file contains 69,895 simulation records because it
+also includes 58,281 simulations with experimentally altered predator
+feeding links. Those additional experiments are outside the scope of
+this analysis.</p>
 </div>
 <div id="statistical-models" class="section level1" number="4">
 <h1><span class="header-section-number">4</span> Statistical models</h1>
@@ -2465,7 +2450,8 @@ trajectory. Their intervals quantify sampling uncertainty within the
 ensemble, conditional on the reference profile and model
 specification.</p>
 <p>Prey-link persistence measures resource-species retention, not prey
-biomass or production. Its association with predator biomass does not identify the mechanism underlying this relationship. The precise
+biomass or production. Its association with predator biomass does not
+identify the mechanism underlying this relationship. The precise
 historical simulation source revision associated with every input record
 remains unresolved.</p>
 </div>

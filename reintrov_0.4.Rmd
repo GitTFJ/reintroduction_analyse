@@ -62,13 +62,19 @@ time; a full run uses 200 resamples.
 
 # Study design
 
-We examined predator establishment and community responses to predator
-extirpation and subsequent reintroduction using bioenergetic food-web
-simulations. Each simulation comprised three sequential phases: an intact
-community (phase 1), predator extirpation (phase 2) and predator reintroduction
-(phase 3). Community responses comprised resident species richness, total
-biomass, temporal biomass stability and biomass evenness. Predator responses
-comprised establishment, biomass and temporal biomass stability.
+We used bioenergetic food-web simulations to examine predator establishment
+and community responses to predator extirpation and reintroduction. Communities
+were simulated through three phases. First, we simulated the intact food web
+to establish its reference dynamics. We then removed the surviving species
+with the highest trophic level and simulated the community after extirpation.
+Finally, we reintroduced that predator at the mean biomass of surviving
+resident species and simulated the community after its return. Each phase
+comprised 2,000 model time units of burn-in followed by a 500-unit measurement
+window.
+
+Community responses comprised resident species richness, total biomass,
+temporal biomass stability and biomass evenness. Predator responses comprised
+establishment, biomass and temporal biomass stability.
 
 Responses were expressed relative to the preceding phase, except predator
 biomass and stability, which were compared with their intact values. Subscripts
@@ -77,7 +83,7 @@ reintroduced/intact ratios, respectively. Temporal stability is the inverse
 coefficient of variation of biomass. Variable definitions accompany the data
 in `data/DATA_DICTIONARY.csv`.
 
-# Simulation selection
+# Simulation dataset
 
 ```{r input}
 # Load into a private environment to avoid accidental use of unrelated objects.
@@ -99,7 +105,7 @@ stopifnot(!anyDuplicated(sims$sim_id), nrow(sims) > 0)
 cohort <- data.frame(stage = c("Input", "Finite predator biomass ratio",
   "Baseline: no imposed feeding-link change"),
   simulations = c(nrow(raw), nrow(finite_biomass_ratio), nrow(sims)))
-knitr::kable(cohort)
+
 write.csv(cohort, file.path(out_dir, "cohort_counts.csv"), row.names = FALSE)
 
 # Z remains available in the input; z_1 is the analysis name.
@@ -111,21 +117,26 @@ sims$stab_com_1 <- log(sims$stab_com_1)
 sims$stab_com_2 <- log(sims$stab_com_2)
 ```
 
-The dataset contained `r format(nrow(raw), big.mark = ",")` simulation
-records. Excluding `r format(nrow(raw) - nrow(finite_biomass_ratio), big.mark = ",")`
-records with non-finite reintroduced/intact predator biomass ratios left
-`r format(nrow(finite_biomass_ratio), big.mark = ",")` records. Of these,
-`r format(nrow(sims), big.mark = ",")` represented baseline simulations with
-no imposed addition or removal of predator feeding links and formed the
-analysis dataset. These counts describe successive selection steps, as
-summarised in the table.
+The baseline dataset comprised
+`r format(sum(is.na(raw$nb_link)), big.mark = ",")` community simulations
+following the intact–extirpated–reintroduced sequence described above. In
+these simulations, the predator retained its original prey preferences;
+feeding links became inactive if prey went extinct, but no links were
+experimentally added or removed.
 
-The biomass-ratio filter excluded
-`r format(sum(is.na(raw$nb_link) & !is.finite(raw$delta_bmp_31)), big.mark = ",")`
-of the `r format(sum(is.na(raw$nb_link)), big.mark = ",")` baseline records.
-Establishment probabilities are therefore conditional on retention in the
-analysis dataset, which limits their interpretation across all attempted
-reintroductions.
+Of these simulations, `r format(nrow(sims), big.mark = ",")` provided usable
+reintroduced/intact predator biomass ratios and were retained for analysis.
+We excluded `r sum(is.na(raw$nb_link) & is.na(raw$delta_bmp_31))` simulations
+with missing or undefined ratios and
+`r sum(is.na(raw$nb_link) & is.infinite(raw$delta_bmp_31))` with infinite
+ratios (`r sum(is.na(raw$nb_link) & !is.finite(raw$delta_bmp_31))` exclusions
+in total).
+
+The full input file contains `r format(nrow(raw), big.mark = ",")`
+simulation records because it also includes
+`r format(sum(!is.na(raw$nb_link)), big.mark = ",")` simulations with
+experimentally altered predator feeding links. Those additional experiments
+are outside the scope of this analysis.
 
 # Statistical models
 
